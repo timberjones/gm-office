@@ -35,7 +35,7 @@
     ?tz=America/Chicago   clock time zone (weather city is set in the Apps Script: WEATHER_CITY)
     ?scale=4        force the pixel scale                ?lofi=0    no warm tint / vignette
     ?fps=30         frame rate (default 60)              ?smooth=0  no Scale2x smoothing (falls back to 2x supersampling)
-    ?hd=0           plain 1x sprites (no rims / pre-smoothed edges)
+    ?hd=0           plain 1x sprites (no rims / pre-smoothed edges)    ?hd=all  everyone in HD detail (prototype: product + CFO)
     ?seed=N         seed the randomness                  ?dogs=1    bring the poodles in right away (9:00-16:30)
     ?chat=0         no speech bubbles at all              ?feed=0    don't read the live activity feed
   Keys: N night, D day, C real clock, W cycle weather, B say a one-liner now, F fullscreen
@@ -212,12 +212,15 @@ function pxCanvas_(px, w, h, art) {
   return c;
 }
 // px: packed pixels (0 = empty) of w x h, with a 1px empty pad. Adds the outline and builds both sizes.
-function spriteOf_(px, w, h) {
+function addEdge_(px, w, h) {   // empty pixels touching a filled one (4-neighbour) become the outline
   const on = i => px[i] > EDGE;
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     const i = y * w + x;
     if (!px[i] && ((x > 0 && on(i - 1)) || (x < w - 1 && on(i + 1)) || (y > 0 && on(i - w)) || (y < h - 1 && on(i + w)))) px[i] = EDGE;
   }
+}
+function spriteOf_(px, w, h) {
+  addEdge_(px, w, h);
   const lo = pxCanvas_(px, w, h, 1);
   if (ART < 2) return lo;
   const hi = pxCanvas_(epx2_(px, w, h), w * 2, h * 2, 2);
@@ -250,6 +253,69 @@ function bakeRows(rows, pal, flip) {
   }
   return spriteOf_(px, W, h + 2);
 }
+// ---- HD people: the 12x16 character map is Scale2x'd AS CHARACTERS (so every pixel keeps its meaning), then
+// a detail pass adds what only fits at half-pixel size: eye glints, brows, mouth, cheeks, hair strands, collar,
+// belt buckle, shoe shine. Same silhouettes and outline as everyone else, twice the detail.
+// Prototype: only looks with hd:true (?hd=all = everyone, ?hd=0 = nobody).
+const HD_ALL = params.get('hd') === 'all';
+const CH = c => c.charCodeAt(0);
+function detailHD_(X, w, h, view) {
+  const at = (x, y) => x >= 0 && y >= 0 && x < w && y < h ? X[y * w + x] : 0;
+  const set = (x, y, to, ...from) => { if (from.map(CH).includes(at(x, y))) X[y * w + x] = CH(to); };
+  const e = CH('e'), hh = CH('h'), t = CH('t'), T = CH('T'), p = CH('p'), k = CH('k'), s = CH('s'), S = CH('S');
+  // eyes: 2x2 blocks -> glint top-right, brow two rows up, mouth and cheeks below
+  const eyes = [];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (at(x, y) === e && at(x - 1, y) !== e && at(x, y - 1) !== e) eyes.push([x, y]);
+  for (const [x, y] of eyes) {
+    set(x + 1, y, 'W', 'e');
+    set(x, y - 2, 'H', 's'); set(x + 1, y - 2, 'H', 's');
+  }
+  if (view === 'down' && eyes.length >= 2) {
+    const [a, b] = eyes, my = a[1] + 3, mx = (a[0] + b[0] + 1) >> 1;
+    set(mx - 1, my, 'm', 's'); set(mx, my, 'm', 's');
+  } else if (view === 'right' && eyes.length) {
+    const [x, y] = eyes[0];
+    set(x + 1, y + 3, 'm', 's');
+  }
+  // hair: a shadow where it meets the face, a short sheen near the crown
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (at(x, y) === hh && (at(x, y + 1) === s || at(x, y + 1) === e)) X[y * w + x] = CH('H');
+  let top = -1;
+  for (let y = 0; y < h && top < 0; y++) for (let x = 0; x < w; x++) if (at(x, y) === hh) { top = y; break; }
+  if (top >= 0) {
+    const y = top + 3;
+    let x0 = -1, x1 = -1;
+    for (let x = 0; x < w; x++) if (at(x, y) === hh) { if (x0 < 0) x0 = x; x1 = x; }
+    if (x1 - x0 >= 8) for (let i = 3; i <= 5; i++) { set(x0 + i, y, 'L', 'h'); if (i < 5) set(x0 + i + 1, y - 1, 'L', 'h'); }
+  }
+  // clothes: collar under the neck, belt + buckle at the waist, shine on the shoes
+  for (let y = 1; y < h; y++) for (let x = 0; x < w; x++) {
+    const v = at(x, y), up = at(x, y - 1);
+    if ((v === t || v === T) && (up === s || up === S)) X[y * w + x] = CH('C');
+    else if (v === p && (up === t || up === T || up === CH('C'))) X[y * w + x] = CH('B');
+    else if (v === k && up === p) X[y * w + x] = CH('K');
+  }
+  if (view === 'down') for (let y = 0; y < h; y++) {
+    let x0 = -1, x1 = -1;
+    for (let x = 0; x < w; x++) if (at(x, y) === CH('B')) { if (x0 < 0) x0 = x; x1 = x; }
+    if (x1 - x0 >= 5) { const c = (x0 + x1) >> 1; set(c, y, 'G', 'B'); set(c + 1, y, 'G', 'B'); }
+  }
+}
+function bakeHD(rows, pal, flip, view) {
+  const h = rows.length, w = rows[0].length, W = w + 2, H = h + 2, c1 = new Uint32Array(W * H);
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) if (pal[rows[j][i]]) c1[(1 + j) * W + 1 + i] = CH(rows[j][i]);
+  addEdge_(c1, W, H);
+  const W2 = W * 2, H2 = H * 2, X = epx2_(c1, W, H);
+  detailHD_(X, W2, H2, view);
+  const px = new Uint32Array(X.length);
+  for (let y = 0; y < H2; y++) for (let x = 0; x < W2; x++) {
+    const v = X[y * W2 + (flip ? W2 - 1 - x : x)];
+    px[y * W2 + x] = v === EDGE ? EDGE : v ? pk(pal[String.fromCharCode(v)]) : 0;
+  }
+  const hi = pxCanvas_(px, W2, H2, 2);
+  hi.lo = bakeRows(rows, pal, flip).lo || null;
+  return hi;
+}
+
 const FONT = { W: [5, 5, 7, 7, 5], C: [3, 4, 4, 4, 3] };
 function glyphs(s, x, y, c) {
   g.fillStyle = c;
@@ -355,9 +421,14 @@ function buildFrames(m) {
   const mod = (base, view) => { const r = base.map(s => s.split('')); hairMods(r, view, m); return r.map(a => a.join('')); };
   const legs = (rows, l) => rows.slice(0, 13).concat(l);
   const down = mod(DOWN, 'down'), up = mod(UP, 'up'), right = mod(RIGHT, 'right');
-  const F = {};
+  const F = {}, hd = ART >= 2 && (m.hd || HD_ALL);
+  if (hd) Object.assign(pal, { W: '#fdfcf6', H: shade(m.hair, 0.7), L: mixC(m.hair, '#ffffff', 0.28), C: mixC(m.shirt, '#ffffff', 0.4),
+    m: mixC(sk[1], '#a8505a', 0.35), B: shade(m.pants, 0.6), G: '#d8b24a', K: '#5a5470' });
   // stand/walk frames stretch at the hips (row 13), seated frames at the chest (row 9)
-  const b = (k, rows, flip, row = 13, front = true) => { F[k] = bakeRows(buildMod(rows, m, row, front), pal, flip); };
+  const b = (k, rows, flip, row = 13, front = true) => {
+    const r = buildMod(rows, m, row, front);
+    F[k] = hd ? bakeHD(r, pal, flip, k.startsWith('up') || k.startsWith('sitUp') ? 'up' : k.startsWith('down') || k === 'sitDown' ? 'down' : 'right') : bakeRows(r, pal, flip);
+  };
   b('down', down); b('downA', legs(down, LEGS_A)); b('downB', legs(down, LEGS_B));
   b('up', up); b('upA', legs(up, LEGS_A)); b('upB', legs(up, LEGS_B));
   b('right', right, false, 13, false); b('rightA', legs(right, LEGS_SIDE), false, 13, false); b('left', right, true, 13, false); b('leftA', legs(right, LEGS_SIDE), true, 13, false);
@@ -559,7 +630,7 @@ const world = { hour: hourNow() };
 const DESKBOUND = [['type', 64], ['call', 24], ['meeting', 1], ['coffee', 3], ['water', 2], ['wc', 2]];   // rarely leaves the desk
 const ROLES = {
   cfo: { acts: DESKBOUND, talk: 0.5, fixed: true, in: [7.2, 7.4], out: [18.3, 18.6], lunch: 'desk',
-    look: { hair: '#6b4a2a', skin: 0, shirt: '#3b5a96', pants: '#2a2238', style: 'short', beard: true } },
+    look: { hair: '#6b4a2a', skin: 0, shirt: '#3b5a96', pants: '#2a2238', style: 'short', beard: true, hd: true } },
   coo: { acts: DESKBOUND, talk: 0.5, fixed: true, in: [7.9, 8.3], out: [17.0, 17.5], lunch: 'desk',
     look: { hair: '#1a1a24', skin: 2, shirt: '#e8506a', pants: '#2f3a5c', style: 'long', build: 'small' } },
   ceo: { acts: DESKBOUND, talk: 0.5, fixed: true, in: [7.9, 8.4], out: [17.0, 17.6], lunch: 'desk',
@@ -568,7 +639,7 @@ const ROLES = {
   am: { talk: 1.5, acts: ACTS },
   intern: { talk: 0, acts: [['type', 72], ['coffee', 6], ['water', 4], ['wc', 3], ['fridge', 2], ['sink', 2]] },
   staff: { talk: 1, acts: ACTS },
-  product: { talk: 1, fixed: true, days: ['tue', 'thu'], acts: ACTS, look: { hair: '#1a1a24', skin: 1, shirt: '#22b573', pants: '#2f3a5c', style: 'short' } },
+  product: { talk: 1, fixed: true, days: ['tue', 'thu'], acts: ACTS, look: { hair: '#1a1a24', skin: 1, shirt: '#22b573', pants: '#2f3a5c', style: 'short', hd: true } },
   // CFO's team member at the second desk in the CFO's office: no user id; all he ever says is his one line
   cfoteam: { talk: 0, lines: ['nto nto nto...'], acts: [['type', 62], ['call', 18], ['coffee', 6], ['water', 4], ['wc', 3], ['fridge', 2]],
     look: { hair: '#1a1a24', skin: 2, shirt: '#5b6a95', pants: '#2a2238', style: 'short' } },
