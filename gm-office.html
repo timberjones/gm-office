@@ -448,7 +448,7 @@ function hairMods(r, view, m) {
 }
 const HAIRS = ['#1a1a24', '#2a1a14', '#3a2a20', '#4a3020', '#6b3a22', '#8a5a32', '#c8742a', '#e3c26a', '#9aa4b0', '#1a1a24', '#2a1a14'];
 const SKINS = [['#f6d0a8', '#e0b088'], ['#e8b48a', '#cf9668'], ['#c68a5e', '#a87048'], ['#8d5a3b', '#74472c'], ['#5e3b26', '#4a2d1c']];
-const SHIRTS = ['#22b573', '#3b6fd6', '#ec8f2b', '#d9453b', '#8b5cf6', '#f1e9d6', '#2f9a8a', '#f472b6', '#e9c46a', '#5b6a95', '#f4f4f0', '#3a3f55', '#b85c38', '#6aa0c8'];
+const SHIRTS = ['#22b573', '#3b6fd6', '#ec8f2b', '#d9453b', '#8b5cf6', '#f1e9d6', '#2f9a8a', '#f472b6', '#e9c46a', '#5b6a95', '#f3ecdf', '#3a3f55', '#b85c38', '#6aa0c8'];
 const PANTS = ['#2f3a5c', '#3a3f55', '#5a4a3a', '#3b5a96', '#2a2238', '#6b6f7a', '#8a7a5a'];
 function randomLook() {
   const style = pick(['short', 'short', 'long', 'long', 'bun', 'spiky']);
@@ -511,8 +511,8 @@ for (const x of DIVIDERS) blockRect(x, 0, x, 7);
 blockRect(BLOCK.x0, BLOCK.y0, BLOCK.x1, BLOCK.y1);
 
 // tables: desk banks, office desks, conference, lunch and bar tables (drawn row by row so people sort around them)
-const WHITE_DESK = { top: '#f3f3ef', frame: '#c08850', front: '#b97a45', legs: '#8a5a30' };
-const WHITE_TABLE = { top: '#f6f6f2', frame: '#d8d8d2', front: '#e6e6e0', legs: '#3a3f4a' };
+const WHITE_DESK = { top: '#f2e9d8', frame: '#c08850', front: '#b97a45', legs: '#8a5a30' };
+const WHITE_TABLE = { top: '#f3ecde', frame: '#dacfbd', front: '#e6dccb', legs: '#3a3f4a' };
 const BAR_TABLE = { top: '#c8905a', frame: '#a86b3a', front: '#8a5a30', legs: '#3a3f4a' };
 const TABLES = [
   { x0: 6, x1: 7, y0: 10, y1: 19, s: WHITE_DESK, mid: false, grow: [0, 4] },   // bank 1 (along the left wall, runs a bit long at the bottom)
@@ -686,7 +686,7 @@ const ROLES = {
   coo: { acts: DESKBOUND, talk: 0.5, fixed: true, in: [7.9, 8.3], out: [17.0, 17.5], lunch: 'desk',
     look: { hair: '#1a1a24', skin: 2, shirt: '#e8506a', pants: '#2f3a5c', style: 'long', build: 'small' } },
   ceo: { acts: DESKBOUND, talk: 0.5, fixed: true, in: [7.9, 8.4], out: [17.0, 17.6], lunch: 'desk',
-    look: { hair: '#8a5a32', skin: 0, shirt: '#f4f4f0', pants: '#3a3f55', style: 'short', build: 'tall' } },
+    look: { hair: '#8a5a32', skin: 0, shirt: '#f3ecdf', pants: '#3a3f55', style: 'short', build: 'tall' } },
   buyer: { talk: 3, acts: [['type', 26], ['call', 32], ['walkcall', 8], ['chat', 10], ['island', 5], ['coffee', 6], ['water', 3], ['fridge', 2], ['sink', 1], ['wc', 3], ['meeting', 1]] },
   am: { talk: 1.5, acts: ACTS },
   intern: { talk: 0, acts: [['type', 72], ['coffee', 6], ['water', 4], ['wc', 3], ['fridge', 2], ['sink', 2]] },
@@ -1117,32 +1117,32 @@ function buildSprites() {
     R(0, 3, 3, 7, '#3b6fd6'); R(5, 3, 3, 8, '#7a4a2a'); R(1, 3, 1, 1, '#5b8af0');
   });
   SPR.shelf = mk(24, 18, () => {
-    R(0, 0, 24, 18, '#f4f4f0'); R(1, 1, 22, 16, '#dcdcd6');
-    for (const y of [5, 11]) R(1, y, 22, 1, '#f4f4f0');
+    R(0, 0, 24, 18, '#f3ecdf'); R(1, 1, 22, 16, '#ddd2bf');
+    for (const y of [5, 11]) R(1, y, 22, 1, '#f3ecdf');
     R(2, 1, 2, 4, '#3b6fd6'); R(4, 2, 2, 3, '#f1e9d6'); R(15, 2, 2, 3, '#d9453b'); R(17, 1, 2, 4, '#3b6fd6'); R(19, 2, 2, 3, '#e9c46a');
     R(3, 7, 5, 4, '#c8b48a'); R(11, 7, 7, 4, '#b8a070'); R(19, 8, 3, 3, '#f1e9d6');
     R(2, 13, 5, 4, '#f1e9d6'); R(10, 13, 4, 4, '#c8b48a'); R(17, 13, 4, 4, '#ec8f2b');
     R(0, 17, 1, 1, '#c8c8c2'); R(23, 17, 1, 1, '#c8c8c2');
   });
   SPR.cabinets = mk(8, 34, () => {
-    R(0, 2, 8, 32, '#f2f2ee'); R(0, 2, 8, 1, '#ffffff'); R(6, 2, 2, 32, '#d6d6d0');
-    for (const y of [10, 18, 26]) R(0, y, 8, 1, '#d6d6d0');
+    R(0, 2, 8, 32, '#f1e9da'); R(0, 2, 8, 1, '#ffffff'); R(6, 2, 2, 32, '#d9cdb8');
+    for (const y of [10, 18, 26]) R(0, y, 8, 1, '#d9cdb8');
     for (const y of [6, 14, 22, 30]) R(2, y, 3, 1, '#9aa4b0');
     R(1, 0, 4, 3, '#3b6fd6'); R(5, 1, 2, 2, '#e9c46a');
   });
   // kitchen island: light wood butcher-block top, white cabinet base (photo)
   SPR.island = mk(16, 36, () => {
     R(0, 0, 16, 30, '#dcc08e'); R(0, 0, 16, 1, '#ecd4a6'); for (let y = 4; y < 30; y += 5) R(1, y, 14, 1, '#ceb07c');
-    R(0, 30, 16, 6, '#f2f2ee'); R(0, 30, 16, 1, '#ffffff'); R(7, 31, 1, 5, '#d6d6d0'); R(3, 33, 2, 1, '#9aa4b0'); R(10, 33, 2, 1, '#9aa4b0');
-    R(3, 3, 7, 4, '#f2f2ee'); P(4, 3, '#d9453b'); P(6, 3, '#e9c46a'); P(5, 4, '#7fd06a'); P(8, 4, '#ec8f2b');   // fruit bowl
+    R(0, 30, 16, 6, '#f1e9da'); R(0, 30, 16, 1, '#ffffff'); R(7, 31, 1, 5, '#d9cdb8'); R(3, 33, 2, 1, '#9aa4b0'); R(10, 33, 2, 1, '#9aa4b0');
+    R(3, 3, 7, 4, '#f1e9da'); P(4, 3, '#d9453b'); P(6, 3, '#e9c46a'); P(5, 4, '#7fd06a'); P(8, 4, '#ec8f2b');   // fruit bowl
     R(9, 12, 5, 4, '#8a6a4a'); R(10, 13, 3, 1, '#a8885e');                                                   // boxes
     R(3, 19, 3, 3, '#f1e9d6'); R(10, 22, 3, 3, '#d9453b'); R(4, 25, 2, 2, '#3b6fd6');                         // mugs
   });
   // kitchen counter along the washroom's right wall (photo: light top, dark lower cabinets): microwave, sink, dish rack, toaster
   SPR.counterV = mk(8, 50, () => {
-    R(0, 2, 8, 48, '#3a3f4a'); R(0, 2, 6, 46, '#d8d4cc'); R(0, 2, 6, 1, '#ecebe6'); R(6, 2, 2, 48, '#454b58');
+    R(0, 2, 8, 48, '#3a3f4a'); R(0, 2, 6, 46, '#d9cdb9'); R(0, 2, 6, 1, '#efe6d6'); R(6, 2, 2, 48, '#454b58');
     for (const y of [10, 22, 34, 46]) P(7, y, '#9aa4b0');
-    R(0, 0, 6, 8, '#f2f2ee'); R(1, 2, 4, 4, '#2a2f3a'); P(4, 1, '#9aa4b0');                  // microwave
+    R(0, 0, 6, 8, '#f1e9da'); R(1, 2, 4, 4, '#2a2f3a'); P(4, 1, '#9aa4b0');                  // microwave
     R(1, 18, 4, 11, '#9aa4b0'); R(2, 19, 2, 9, '#6f7c8a'); R(0, 22, 2, 1, '#c8ccd2'); R(0, 25, 2, 1, '#c8ccd2');   // sink + taps
     R(1, 32, 4, 6, '#c8ccd2'); P(2, 33, '#3b6fd6'); P(3, 35, '#f1e9d6'); P(2, 36, '#d9453b');  // dish rack
     R(1, 41, 4, 5, '#2a2f3a'); R(2, 42, 2, 1, '#e8a040');                                       // toaster oven
@@ -1152,11 +1152,11 @@ function buildSprites() {
     R(0, 8, 8, 12, '#eef0f4'); R(0, 8, 8, 1, '#ffffff'); R(6, 9, 2, 11, '#c8ced8'); P(1, 11, '#3b6fd6'); P(4, 11, '#d9453b'); R(1, 14, 5, 1, '#c8ced8');
   });
   SPR.coffee = mk(16, 18, () => {
-    R(0, 6, 16, 5, '#d8d4cc'); R(0, 6, 16, 1, '#ecebe6'); R(0, 11, 16, 7, '#3a3f4a'); R(1, 12, 6, 5, '#454b58'); R(9, 12, 6, 5, '#454b58');
+    R(0, 6, 16, 5, '#d9cdb9'); R(0, 6, 16, 1, '#efe6d6'); R(0, 11, 16, 7, '#3a3f4a'); R(1, 12, 6, 5, '#454b58'); R(9, 12, 6, 5, '#454b58');
     R(3, 0, 9, 10, '#1e2130'); R(3, 0, 9, 2, '#3a3f55'); R(5, 3, 5, 2, '#454b58'); R(6, 7, 3, 1, '#9aa4b0');
   });
   SPR.fridge = mk(16, 24, () => {
-    R(0, 0, 16, 24, '#f2f2ee'); R(0, 0, 16, 1, '#ffffff'); R(0, 1, 1, 23, '#fbfbf8'); R(13, 0, 3, 24, '#d6d6d0'); R(15, 0, 1, 24, '#c4c4be'); R(0, 8, 16, 1, '#c8c8c2'); R(0, 9, 13, 1, '#fafaf6');
+    R(0, 0, 16, 24, '#f1e9da'); R(0, 0, 16, 1, '#ffffff'); R(0, 1, 1, 23, '#fbfbf8'); R(13, 0, 3, 24, '#d9cdb8'); R(15, 0, 1, 24, '#c4c4be'); R(0, 8, 16, 1, '#c8c8c2'); R(0, 9, 13, 1, '#fafaf6');
     R(11, 2, 1, 4, '#9aa4b0'); R(11, 10, 1, 8, '#9aa4b0'); P(3, 3, '#d9453b'); P(6, 4, '#3b6fd6'); R(2, 12, 4, 5, '#fff6b0');
   });
 }
@@ -1199,8 +1199,8 @@ function buildLayers() {
         const xs = Math.max(0, x), xe = Math.min(GX * C8, x + len);
         if (xe > xs) {
           R(xs, y, xe - xs, 3, t[1]); R(xs, y, xe - xs, 1, t[0]);
-          for (let k = 0; k < 1; k++) { const gx = x + 3 + Math.floor(hash(row * 13 + n, 20 + k) * (len - 8)), gl = 3 + Math.floor(hash(row + n, 30 + k) * 5); if (gx >= 0) R(gx, y + 1 + k % 2, Math.min(gl, xe - gx), 1, t[2]); }
-          if (hash(row * 7 + n, 40) < 0.08) { const kx = x + 4 + Math.floor(hash(n, row) * (len - 8)); if (kx >= 0 && kx < xe) { P(kx, y + 1, t[2]); P(kx + 1, y + 1, GAP); P(kx + 2, y + 1, t[2]); } }
+          for (let k = 0; k < 1; k++) { const gx = x + 3 + Math.floor(hash(row * 13 + n, 20 + k) * (len - 8)), gl = 3 + Math.floor(hash(row + n, 30 + k) * 5); if (gx >= 0 && gx < xe) R(gx, y + 1 + k % 2, Math.min(gl, xe - gx), 1, t[2]); }
+          if (hash(row * 7 + n, 40) < 0.08) { const kx = x + 4 + Math.floor(hash(n, row) * (len - 8)); if (kx >= 0 && kx + 2 < xe) { P(kx, y + 1, t[2]); P(kx + 1, y + 1, GAP); P(kx + 2, y + 1, t[2]); } }
         }
         if (x >= 0) { R(x, y, 1, 3, JOINT); P(x + 1, y, t[0]); }
         x += len;
@@ -1247,16 +1247,16 @@ function buildLayers() {
   for (let a = 0; a <= 20; a++) { const t = a / 20 * Math.PI / 2; P(wx0 + Math.sin(t) * 17, wy1 - Math.cos(t) * 17, '#7fb8d0'); }
   R(wx0 + 1, wy1 - 17, 2, 2, '#9aa4b0');
   // double-sink vanity on the right wall (top half)
-  R(wx1 - 8, wy0 + 2, 8, 24, OUT); R(wx1 - 7, wy0 + 3, 7, 22, '#f2f2ee'); R(wx1 - 7, wy0 + 3, 1, 22, '#d6d6d0');
+  R(wx1 - 8, wy0 + 2, 8, 24, OUT); R(wx1 - 7, wy0 + 3, 7, 22, '#f1e9da'); R(wx1 - 7, wy0 + 3, 1, 22, '#d9cdb8');
   for (const sy of [wy0 + 5, wy0 + 15]) { R(wx1 - 6, sy, 4, 6, '#c8d4dc'); R(wx1 - 5, sy + 1, 2, 4, '#9aaebc'); P(wx1 - 1, sy + 3, '#9aa4b0'); }
   R(wx1, wy0 + 3, 1, 22, '#bfe6f0');                                                         // mirror strip
   // toilet on the right wall (bottom), facing left: tank against the wall, bowl pointing into the room
-  R(wx1 - 4, wy1 - 18, 4, 11, OUT); R(wx1 - 3, wy1 - 17, 3, 9, '#f6f6f2');
+  R(wx1 - 4, wy1 - 18, 4, 11, OUT); R(wx1 - 3, wy1 - 17, 3, 9, '#f3ecde');
   R(wx1 - 12, wy1 - 17, 9, 9, OUT); R(wx1 - 11, wy1 - 16, 8, 7, '#ffffff'); R(wx1 - 10, wy1 - 15, 6, 5, '#dce6ec'); P(wx1 - 11, wy1 - 16, OUT); P(wx1 - 11, wy1 - 10, OUT);
   R(wx0 + 13, wy0, 6, 7, OUT); R(wx0 + 14, wy0 + 1, 4, 5, '#6b727c'); R(wx0 + 14, wy0 + 1, 4, 1, '#9aa4b0'); R(wx0 + 15, wy0 + 2, 2, 1, '#454b58');   // garbage can on the top wall, right of the door
   for (const d of ROOM_DOORS) { R(d.x * C8 + 1, by - 1, 6, 4, OUT); R(d.x * C8 + 2, by, 4, 3, '#9a6a3c'); P(d.x * C8 + 5, by + 1, '#e9c46a'); }
   // outer walls
-  const WALL = '#f2efe8';
+  const WALL = '#efe6d5';
   R(45, 0, 3, 24 * C8, OUT); R(46, 0, 2, 24 * C8, WALL);
   R(GX * C8, -20, 3, GY * C8 + 24, OUT); R(GX * C8, -20, 2, GY * C8 + 24, WALL);
   R(-3, GY * C8, GX * C8 + 6, 4, OUT); R(-2, GY * C8, GX * C8 + 4, 3, WALL);
@@ -1282,7 +1282,7 @@ function buildLayers() {
     const panes = Math.max(2, Math.round(w / 15));
     for (let k = 1; k < panes; k++) R(Math.round(x + k * w / panes), y, 1, h, '#2b2f3a');
     R(x, y + 5, w, 1, '#2b2f3a');
-    R(x - 3, y + h + 1, w + 6, 2, '#e2ded6'); R(x - 3, y + h + 3, w + 6, 1, OUT);
+    R(x - 3, y + h + 1, w + 6, 2, '#e3d8c4'); R(x - 3, y + h + 3, w + 6, 1, OUT);
   }
   bg2 = x2Layer_(bg); wallFG2 = x2Layer_(wallFG);
 }
@@ -1314,9 +1314,9 @@ function buildExterior() {
   const hy0 = OY + HALL_Y0, hy1 = OY + HALL_Y1, hx1 = OX - 3;
   if (hx1 > 0) {
     for (let y = hy0; y < hy1; y += 8) for (let x = hx1 - 8; x > -8; x -= 8) R(x, y, 8, 8, (Math.round((hx1 - x) / 8) + (y - hy0) / 8) % 2 ? '#d6d0c4' : '#cdc7ba');
-    R(0, hy0 - 11, hx1, 11, OUT); R(0, hy0 - 10, hx1, 9, '#f2efe8'); R(0, hy0 - 2, hx1, 1, '#d8d4cc');
+    R(0, hy0 - 11, hx1, 11, OUT); R(0, hy0 - 10, hx1, 9, '#efe6d5'); R(0, hy0 - 2, hx1, 1, '#d9cdb9');
     for (let x = hx1 - 40; x > -12; x -= 56) { R(x, hy0 - 10, 10, 10, OUT); R(x + 1, hy0 - 9, 8, 9, '#9a6a3c'); P(x + 7, hy0 - 5, '#e9c46a'); }   // other units' doors
-    R(0, hy1, hx1, 4, OUT); R(0, hy1, hx1, 3, '#f2efe8');
+    R(0, hy1, hx1, 4, OUT); R(0, hy1, hx1, 3, '#efe6d5');
   }
   ext2 = SS >= 2 ? x2Layer_(ext) : null;
   exteriorDirty = false;
@@ -1388,8 +1388,9 @@ function drawTableRowRaw_(t, r) {
   const s = t.s, x = t.x0 * C8 - gl, w = (t.x1 - t.x0 + 1) * C8 + gl + gr, y = r * C8, first = r === t.y0, last = r === t.y1;
   R(x - 1, y - (first ? 1 : 0), w + 2, 8 + (first ? 1 : 0), OUT);
   R(x, y, w, 8, s.top);
+  R(x + 1, y, 1, 8, shade(s.top, 1.03)); R(x + w - 2, y, 1, 8, shade(s.top, 0.95));   // soft light on the left, shade on the right
   R(x, y, 1, 8, s.frame); R(x + w - 1, y, 1, 8, s.frame);
-  if (first) { R(x, y, w, 1, s.frame); R(x + 1, y + 1, w - 2, 1, '#ffffff'); }
+  if (first) { R(x, y, w, 1, s.frame); R(x + 1, y + 1, w - 2, 1, '#fbf5ea'); }
   if (t.mid) R(x + gl + C8 + 2, y, C8 - 4, 8, shade(s.top, 0.96));   // centre strip stays over the middle cell
   if (t.clutter && !CLASSIC) {   // exec L-desk arm: a paper stack and a pen cup
     R(x + 3, y + 2, 7, 5, OUT); R(x + 4, y + 3, 5, 3, '#ffffff'); R(x + 5, y + 4, 3, 1, '#c8ccd2'); R(x + 4, y + 5, 5, 1, '#e2e4ea');
@@ -1469,7 +1470,7 @@ function drawChair(s) {   // chairs come in a few kinds: each is drawn once and 
   g.save(); g.translate(x, y); blitCap_(cap, -3, -8, 14, 17); g.restore();
 }
 function drawChairRaw_(s, x, y) {
-  const c = s.chair, d = shade(c, 0.78), base = s.kind === 'desk' ? '#3a3f4a' : '#d8d8d2';   // back = pulled out from a widened desk
+  const c = s.chair, d = shade(c, 0.78), base = s.kind === 'desk' ? '#3a3f4a' : '#dacfbd';   // back = pulled out from a widened desk
   if (s.stool) {     // bar stool: round seat on a tall post with a foot ring
     R(x, y + 2, 8, 4, OUT); R(x + 1, y + 3, 6, 2, '#3a3f4a'); R(x + 1, y + 3, 6, 1, '#55608a');
     R(x + 3, y + 6, 2, 2, '#9aa4b0'); R(x + 1, y + 7, 6, 1, '#9aa4b0');
@@ -1540,13 +1541,13 @@ function drawPropRaw_(p) {
       break;
     }
     case 'credenza': {
-      R(x - 1, y + 1, w * C8 + 2, 8, OUT); R(x, y + 2, w * C8, 3, '#f2f2ee'); R(x, y + 5, w * C8, 3, '#dcdcd6');
+      R(x - 1, y + 1, w * C8 + 2, 8, OUT); R(x, y + 2, w * C8, 3, '#f1e9da'); R(x, y + 5, w * C8, 3, '#ddd2bf');
       for (let i = 0; i < w; i++) { R(x + i * C8 + 3, y + 6, 2, 1, '#9aa4b0'); if ((gx + i) % 2) R(x + i * C8 + 1, y, 5, 2, ['#3b6fd6', '#d9453b', '#e9c46a'][i % 3]); }
       break;
     }
     case 'bookcase': {   // seen from above against the bottom wall: white tops, unit seams, a few things on top
       const cw = w * C8, top = bottom - 5;   // shallow: half the depth of a cell-and-a-bit
-      R(x - 1, top - 1, cw + 2, 6, OUT); R(x, top, cw, 5, '#f2f2ee'); R(x, top, cw, 1, '#ffffff'); R(x, bottom - 1, cw, 1, '#e2e2dc');
+      R(x - 1, top - 1, cw + 2, 6, OUT); R(x, top, cw, 5, '#f1e9da'); R(x, top, cw, 1, '#ffffff'); R(x, bottom - 1, cw, 1, '#e2e2dc');
       for (let px = x + 16; px < x + cw; px += 16) R(px, top + 1, 1, 4, '#d0d0ca');
       for (let k = 0; k < w; k += 3) { const h = hash(gx + k, 27); if (h < 0.5) R(x + k * C8 + 3, top + 1, 4, 2, ['#c8b48a', '#3b6fd6', '#f1e9d6', '#9aa4b0'][(h * 8 | 0) % 4]); }
       break;
@@ -1592,16 +1593,16 @@ function drawPropRaw_(p) {
 const doorOpen = GLASS_DOORS.map(() => 0);
 let wallStrip = null;
 function wallFace_(x0, x1, y0, h) {   // painted wall face: soft panel seams + a faint texture, wood baseboard at the foot
-  R(x0, y0, x1 - x0, h, '#f2efe8');
-  R(x0, y0, x1 - x0, 1, '#f8f6f1'); R(x0, y0 + h - 3, x1 - x0, 1, '#e6e2d9');   // soft light at the top, shade above the baseboard
-  for (let xx = x0 + 23; xx < x1; xx += 24) R(xx, y0, 1, h - 2, '#e4e0d7');
+  R(x0, y0, x1 - x0, h, '#efe6d5');
+  R(x0, y0, x1 - x0, 1, '#f6eee0'); R(x0, y0 + h - 3, x1 - x0, 1, '#ddd0b9');   // soft light at the top, shade above the baseboard
+  for (let xx = x0 + 23; xx < x1; xx += 24) R(xx, y0, 1, h - 2, '#e2d6c1');
   R(x0, y0 + h - 2, x1 - x0, 2, '#a86b3a'); R(x0, y0 + h - 2, x1 - x0, 1, '#c98d55');
 }
 function drawWall() {
   const y = 8 * C8;
   if (!wallStrip) wallStrip = capture_(48, y - 8, GX * C8 - 48, 15, () => {
     R(48, y - 8, GX * C8 - 48, 15, OUT);
-    R(48, y - 7, GX * C8 - 48, 1, '#ffffff'); R(48, y - 6, GX * C8 - 48, 1, '#dcd8d0');   // top of the wall
+    R(48, y - 7, GX * C8 - 48, 1, '#ffffff'); R(48, y - 6, GX * C8 - 48, 1, '#dccfb9');   // top of the wall
     wallFace_(48, GX * C8, y - 5, 9);
     R(48, y + 4, GX * C8 - 48, 2, '#7a4e2a');                                             // baseboard's shadowed lip
   });
