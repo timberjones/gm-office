@@ -35,7 +35,7 @@
     ?tz=America/Chicago   clock time zone                ?city=Toronto,ca
     ?scale=4        force the pixel scale                ?lofi=0    no warm tint / vignette
     ?seed=N         seed the randomness                  ?dogs=1    bring the poodles in right away (9:00-16:30)
-    ?chat=0         no sales one-liners
+    ?chat=0         no speech bubbles at all              ?feed=0    don't read the live activity feed
   Keys: N night, D day, C real clock, W cycle weather, B say a one-liner now, F fullscreen
 */
 
@@ -222,6 +222,12 @@ function hairMods(r, view, m) {
   const s = (j, i, c) => { if (r[j] && i >= 0 && i < r[j].length) r[j][i] = c; };
   if (m.style === 'bun') { if (view === 'right') { s(0, 3, 'h'); s(0, 4, 'h'); } else { s(0, 5, 'h'); s(0, 6, 'h'); } }
   if (m.style === 'spiky') { s(0, 3, 'h'); s(0, 6, 'h'); s(0, 8, 'h'); }
+  if (m.hat) {   // baseball cap: crown over the hair, bill out front ('c' = cap colour)
+    const cap = j => { if (r[j]) for (let i = 0; i < r[j].length; i++) if (r[j][i] === 'h') r[j][i] = 'c'; };
+    if (view === 'down') { [0, 1, 2, 3].forEach(cap); for (let i = 2; i <= 9; i++) s(4, i, 'c'); }
+    else if (view === 'up') [0, 1, 2, 3, 4].forEach(cap);
+    else { [0, 1, 2, 3].forEach(cap); for (let i = 8; i <= 11; i++) s(4, i, 'c'); }
+  }
   if (m.style === 'long') {
     if (view === 'down') { for (const j of [7, 8, 9]) { s(j, 1, 'h'); s(j, 10, 'h'); } s(8, 2, 'h'); s(8, 9, 'h'); }
     else if (view === 'up') { for (const j of [7, 8]) for (let i = 2; i <= 9; i++) s(j, i, 'h'); for (let i = 3; i <= 8; i++) s(9, i, 'h'); }
@@ -255,7 +261,7 @@ function buildMod(rows, m, row, front) {
 }
 function buildFrames(m) {
   const sk = SKINS[m.skin];
-  const pal = { h: m.hair, s: sk[0], S: sk[1], e: '#1a1c3a', t: m.shirt, T: shade(m.shirt, 0.78), p: m.pants, k: '#2a2238' };
+  const pal = { h: m.hair, s: sk[0], S: sk[1], e: '#1a1c3a', t: m.shirt, T: shade(m.shirt, 0.78), p: m.pants, k: '#2a2238', c: m.hat || m.hair };
   const mod = (base, view) => { const r = base.map(s => s.split('')); hairMods(r, view, m); return r.map(a => a.join('')); };
   const legs = (rows, l) => rows.slice(0, 13).concat(l);
   const down = mod(DOWN, 'down'), up = mod(UP, 'up'), right = mod(RIGHT, 'right');
@@ -319,19 +325,20 @@ function addSeat(x, y, face, kind, extra) {
   isSeat[idx(x, y)] = 1; SEATS.push(s); return s;
 }
 // desk seats; side seats face the bank (monitor in the next cell), 'down' seats sit behind an office desk
-// role decides who sits there and how they behave (see ROLES)
-const deskSeats = ['cfo', 'coo', 'ceo'].map((role, i) => addSeat(OFFICES[i].x1 - 1, 2, 'right', 'desk', { role }));   // corner of each L-desk, facing the computer on the wall-side desk
+// role decides who sits there and how they behave (see ROLES); code matches the Seats tab in the GM Office Activity sheet
+const deskSeats = ['cfo', 'coo', 'ceo'].map((role, i) => addSeat(OFFICES[i].x1 - 1, 2, 'right', 'desk', { role, code: role }));   // corner of each L-desk, facing the computer on the wall-side desk
 addSeat(7, 5, 'left', 'desk'); addSeat(21, 6, 'right', 'desk'); addSeat(30, 6, 'right', 'desk');   // offices' second desks: nobody sits there
-for (const y of [11, 13, 15, 17]) deskSeats.push(addSeat(8, y, 'left', 'desk', { role: 'am' }));     // left wall: account managers
+[11, 13, 15, 17].forEach((y, i) => deskSeats.push(addSeat(8, y, 'left', 'desk', { role: 'am', code: 'am-' + (i + 1) })));   // left wall: account managers
+const islandCount = { intern: 0, buyer: 0 };
 for (const [l, r, role] of [[14, 18, 'intern'], [24, 28, 'buyer'], [34, 38, 'buyer']])                  // islands: accounting/interns, then plant buyers
   for (const y of [11, 13, 15]) {
     const pt = l === 34 && y === 15;   // right-most island, bottom-left seat: product + tech (user 2372), with an extra monitor
-    deskSeats.push(addSeat(l, y, 'right', 'desk', pt ? { role: 'product', extraMon: true } : { role }));
-    deskSeats.push(addSeat(r, y, 'left', 'desk', { role }));
+    deskSeats.push(addSeat(l, y, 'right', 'desk', pt ? { role: 'product', code: 'product-1', extraMon: true } : { role, code: role + '-' + (++islandCount[role]) }));
+    deskSeats.push(addSeat(r, y, 'left', 'desk', { role, code: role + '-' + (++islandCount[role]) }));
   }
-for (const y of [11, 13]) deskSeats.push(addSeat(45, y, 'right', 'desk', { role: 'staff' }));
+[11, 13].forEach((y, i) => deskSeats.push(addSeat(45, y, 'right', 'desk', { role: 'buyer', code: 'buyer-' + (12 + i) })));   // right wall desks: buyers too
 // bar table: 3 stools; the top one is a real work station, the second monitor sits unused
-deskSeats.push(addSeat(46, 20, 'right', 'desk', { chair: '#3a3f4a', stool: true, role: 'staff' }));
+deskSeats.push(addSeat(46, 20, 'right', 'desk', { chair: '#3a3f4a', stool: true, role: 'staff', code: 'bar-1' }));
 addSeat(46, 22, 'right', 'desk', { chair: '#3a3f4a', stool: true });
 addSeat(46, 24, 'right', 'bar', { chair: '#3a3f4a', stool: true });
 const MEET_SEATS = [
@@ -462,11 +469,29 @@ const ROLES = {
   staff: { talk: 1, acts: ACTS },
   product: { talk: 1, fixed: true, days: ['tue', 'thu'], acts: ACTS, look: { hair: '#1a1a24', skin: 1, shirt: '#22b573', pants: '#2f3a5c', style: 'short' } },
 };
+// People we know, by seat code. uid = Phoenix user id (matches the Seats tab of the GM Office Activity sheet),
+// so their personalized lines come from their own activity. Several entries = they take turns at that seat.
+const KNOWN = {
+  'product-1': [{ uid: 2372 }],   // product + tech (look comes from ROLES.product)
+  'buyer-8': [
+    { uid: 2342, look: { hair: '#c8742a', skin: 0, shirt: '#3b6fd6', pants: '#2f3a5c', style: 'long' } },
+    { uid: 2183, look: { hair: '#3a2a20', skin: 0, shirt: '#5b6a95', pants: '#3a3f55', style: 'short' } },
+  ],
+  'buyer-10': [{ uid: 2629, look: { hair: '#1a1a24', skin: 2, shirt: '#f472b6', pants: '#2f3a5c', style: 'long' } }],
+  'buyer-11': [{ uid: 2380, look: { hair: '#6b4a2a', skin: 0, shirt: '#2f9a8a', pants: '#3a3f55', style: 'short', build: 'tall' } }],
+  'buyer-12': [{ uid: 2155, look: { hair: '#6b4a2a', skin: 0, shirt: '#d9453b', pants: '#2f3a5c', style: 'short', hat: '#2a3a6c' } }],
+  'buyer-13': [{ uid: 2639, look: { hair: '#e3c26a', skin: 0, shirt: '#e9c46a', pants: '#3b5a96', style: 'bun' }, quirks: ["What's for lunch?"] }],
+};
 const workers = deskSeats.map((seat, i) => {   // one person per desk; who comes in depends on the day (see pickRoster)
-  const R0 = ROLES[seat.role], look = R0.look || randomLook();
+  const R0 = ROLES[seat.role];
+  const variants = (KNOWN[seat.code] || [{}]).map(p => {
+    const lk = p.look || R0.look || randomLook();
+    return { uid: p.uid || null, quirks: p.quirks || [], look: lk, frames: buildFrames(lk) };
+  });
+  const v = variants[0], look = v.look;
   const w = {
-    i, look, role: seat.role, acts: R0.acts, talk: R0.talk, fixed: !!R0.fixed,
-    frames: buildFrames(look), home: seat, sitAt: null,
+    i, look, role: seat.role, acts: R0.acts, talk: R0.talk, fixed: !!R0.fixed, variants, v,
+    frames: v.frames, home: seat, sitAt: null,
     px: seat.x * C8, py: seat.y * C8, tx: seat.x, ty: seat.y, dir: 'down',
     pose: 'stand', seated: false, present: false, hidden: false, held: false, summon: null, headset: false, walkT: 0, bubble: null,
     in: R0.in ? rnd(R0.in[0], R0.in[1]) : 7.9 + rnd(0, 1.2), out: R0.out ? rnd(R0.out[0], R0.out[1]) : 16.4 + rnd(0, 1.4),
@@ -493,6 +518,11 @@ function pickRoster() {
   const n = Math.min(rest.length, PEOPLE != null ? Math.max(0, PEOPLE - workers.filter(w => w.fixed && w.today).length) : Math.round(frac * rest.length));
   const order = rest.map(w => [r(), w]).sort((a, b) => a[0] - b[0]).map(p => p[1]);
   order.forEach((w, i) => { w.today = i < n; });
+  workers.forEach(w => {   // shared seats: whose turn it is today
+    if (w.variants.length < 2) return;
+    w.v = w.variants[Math.floor(r() * w.variants.length)];
+    w.look = w.v.look; w.frames = w.v.frames;
+  });
 }
 pickRoster();
 function wantPresent(w) {
@@ -1261,14 +1291,66 @@ const PHRASES = [
   'Just an organic chatbot seeking a human connection.',
 ];
 const CHAT = params.get('chat') !== '0';
-let speech = null, chatT = rnd(15, 40), lastPhrase = -1;
+let speech = null, chatT = rnd(15, 40), lastText = '';
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// Live activity from the GM Office Activity sheet (Apps Script web app, refreshed every 6 h from Redash).
+// Public and email-free: team totals + counts for the seats mapped to a user id. ?feed=0 turns it off, ?feed=<url> overrides.
+const FEED_URL = params.get('feed') === '0' ? null : (params.get('feed') || 'https://script.google.com/macros/s/AKfycbxuD6OJJPCtIqPTPoDGa4DD95pH6j_lNowkOir2TzLUx3K0xCwuY3PsC0sriTjo0Aq3VA/exec');
+let feed = null;
+async function fetchFeed() {
+  if (!FEED_URL) return;
+  try {
+    const ac = new AbortController(), tm = setTimeout(() => ac.abort(), 15000);
+    const r = await fetch(FEED_URL, { signal: ac.signal, cache: 'no-store' });
+    clearTimeout(tm);
+    const j = await r.json();
+    if (j && j.ok) feed = j;
+  } catch (e) { /* keep the last good feed; speech falls back to the one-liners */ }
+}
+const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
+function teamLines_() {
+  if (!feed || !feed.team) return [];
+  const t = feed.team, out = [];
+  if (t.quote.new) out.push(plural(t.quote.new, 'new quote', 'new quotes') + ' today!');
+  if (t.quote.updated) out.push(plural(t.quote.updated, 'quote', 'quotes') + ' updated today.');
+  if (t.order.new) out.push(plural(t.order.new, 'new order', 'new orders') + ' today!');
+  if (t.order.updated) out.push(plural(t.order.updated, 'order', 'orders') + ' moving along today.');
+  if (t.delivery.new) out.push(plural(t.delivery.new, 'delivery', 'deliveries') + ' scheduled today!');
+  if (t.delivery.updated) out.push(plural(t.delivery.updated, 'delivery', 'deliveries') + ' updated today.');
+  return out;
+}
+// lines only the person at that seat (with that user id, if it's their turn today) can say
+function personalLines_(w) {
+  if (!feed || !feed.seats || !w.v.uid) return [];
+  const s = feed.seats.find(x => x.seat === w.home.code && x.user_id === w.v.uid);
+  if (!s) return [];
+  const out = [];
+  if (s.quote.new) out.push('Just sent ' + plural(s.quote.new, 'new quote', 'new quotes') + '!');
+  if (s.quote.updated) out.push('Updated ' + plural(s.quote.updated, 'quote', 'quotes') + ' today.');
+  if (s.order.new) out.push(plural(s.order.new, 'new order', 'new orders') + ' in today!');
+  if (s.order.updated) out.push('Pushed ' + plural(s.order.updated, 'order', 'orders') + ' forward today.');
+  if (s.delivery.new) out.push('Booked ' + plural(s.delivery.new, 'delivery', 'deliveries') + '!');
+  if (s.delivery.updated) out.push('Sorted out ' + plural(s.delivery.updated, 'delivery', 'deliveries') + ' today.');
+  return out;
+}
+// Pick who speaks and what: sales one-liners, team totals, someone's own numbers, or their catchphrase.
 function sayRandom() {
-  const cands = workers.filter(w => w.present && !w.hidden && w.px >= 0 && w.talk > 0);   // plant buyers talk the most, interns never
-  if (!cands.length) return false;
-  let i; do i = Math.floor(rand() * PHRASES.length); while (i === lastPhrase && PHRASES.length > 1);
-  lastPhrase = i;
-  const w = weighted(cands.map(c => [c, c.talk])), text = PHRASES[i];
+  const here = workers.filter(w => w.present && !w.hidden && w.px >= 0);
+  const talkers = here.filter(w => w.talk > 0);   // plant buyers talk the most, interns never
+  if (!talkers.length) return false;
+  const h = world.hour, pools = [];
+  const talker = () => weighted(talkers.map(c => [c, c.talk]));
+  pools.push([() => [talker(), pick(PHRASES)], 3]);
+  const team = teamLines_();
+  if (team.length) pools.push([() => [talker(), pick(team)], 2]);
+  const mine = here.map(w => [w, personalLines_(w)]).filter(p => p[1].length);
+  if (mine.length) pools.push([() => { const [w, lines] = pick(mine); return [w, pick(lines)]; }, 4]);
+  const quirky = here.filter(w => w.v.quirks.length);
+  if (quirky.length) pools.push([() => { const w = pick(quirky); return [w, pick(w.v.quirks)]; }, h >= 10.5 && h < 12.5 ? 4 : 1]);   // lunch talk peaks late morning
+  let w, text;
+  for (let k = 0; k < 4; k++) { [w, text] = weighted(pools)(); if (text !== lastText) break; }
+  lastText = text;
   w.bubble = null;
   speech = { w, text, t: 0, life: 4 + text.length * 0.07 };
   return true;
@@ -1446,6 +1528,7 @@ addEventListener('keydown', e => {
   else if (k === 'f') { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); }
 });
 fetchWeather(); setInterval(fetchWeather, 15 * 60 * 1000);
+fetchFeed(); setInterval(fetchFeed, 15 * 60 * 1000);   // the sheet itself only refreshes every 6 h
 setInterval(() => { MONTH = zoneNow().month || MONTH; }, 3600 * 1000);
 setInterval(pickRoster, 60 * 1000);   // new day: a new set of people comes in
 let last = performance.now(), acc = 0;
