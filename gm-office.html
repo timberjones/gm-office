@@ -34,6 +34,7 @@
     ?hour=14        freeze the clock (decimal ok)        ?speed=60  run the clock N times faster
     ?tz=America/Chicago   clock time zone (weather city is set in the Apps Script: WEATHER_CITY)
     ?scale=4        force the pixel scale                ?lofi=0    no warm tint / vignette
+    ?fps=30         frame rate (default 60)              ?smooth=0  no Scale2x smoothing (falls back to 2x supersampling)
     ?seed=N         seed the randomness                  ?dogs=1    bring the poodles in right away (9:00-16:30)
     ?chat=0         no speech bubbles at all              ?feed=0    don't read the live activity feed
   Keys: N night, D day, C real clock, W cycle weather, B say a one-liner now, F fullscreen
@@ -44,7 +45,7 @@ const params = new URLSearchParams(location.search);
 const PEOPLE = params.has('people') ? Math.max(0, parseInt(params.get('people')) || 0) : null;   // override today's headcount
 const TZ = params.get('tz') || 'America/Toronto';
 const LOFI = params.get('lofi') !== '0';
-const FPS = 30;
+const FPS = Math.max(15, Math.min(60, parseInt(params.get('fps')) || 60));   // 60 fps for smooth half-pixel motion (?fps=30 for a weak TV)
 const C8 = 8, GX = 48, GY = 28;          // 8px grid cells; x 0-5 is the entrance corridor, x 6-47 the office
 const WALK = 30;                          // px per second
 const OUT = '#1a1c3a';
@@ -147,8 +148,12 @@ const shade = (c, k) => rgb(hex(c).map(v => v * k));
 // ---------------------------------------------------------------- drawing primitives
 const canvas = (w, h) => { const c = document.createElement('canvas'); c.width = Math.max(1, w); c.height = Math.max(1, h); return c; };
 let g = null;
-function R(x, y, w, h, c) { g.fillStyle = c; g.fillRect(Math.round(x), Math.round(y), w, h); }
-function P(x, y, c) { g.fillStyle = c; g.fillRect(Math.round(x), Math.round(y), 1, 1); }
+// SS = supersampling: the scene canvas runs at SS x the art resolution, so moving things can sit on half pixels
+// (smoother motion, smoother light) while the art itself stays the same chunky pixels.
+let SS = 1, sceneCtx = null;   // sceneCtx = the supersampled scene context (other canvases stay whole-pixel)
+const snap = v => g === sceneCtx ? Math.round(v * SS) / SS : Math.round(v);
+function R(x, y, w, h, c) { g.fillStyle = c; g.fillRect(snap(x), snap(y), w, h); }
+function P(x, y, c) { g.fillStyle = c; g.fillRect(snap(x), snap(y), 1, 1); }
 function line(x0, y0, x1, y1, c) {
   x0 = Math.round(x0); y0 = Math.round(y0); x1 = Math.round(x1); y1 = Math.round(y1);
   const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
@@ -162,7 +167,7 @@ function line(x0, y0, x1, y1, c) {
   }
 }
 function box(x, y, w, h, c) { R(x - 1, y - 1, w + 2, h + 2, OUT); R(x, y, w, h, c); }   // filled rect with outline
-function blit(c, x, y) { g.drawImage(c, Math.round(x) - 1, Math.round(y) - 1); }
+function blit(c, x, y) { g.drawImage(c, snap(x) - 1, snap(y) - 1); }
 function outline(c) {
   const x = c.getContext('2d'), W = c.width, H = c.height, id = x.getImageData(0, 0, W, H), d = id.data, a = new Uint8Array(W * H);
   for (let i = 0; i < W * H; i++) a[i] = d[i * 4 + 3] > 0 ? 1 : 0;
@@ -841,7 +846,7 @@ function* dogVisit(d) {
   d.present = false; d.bubble = null; d.tx = -1; d.ty = -1;
 }
 function drawDog(d) {
-  const X = Math.round(d.px), Y = Math.round(d.py), F = d.frames, f = d.pose === 'walk' && Math.floor(d.walkT * 10) % 2 ? 'B' : 'A';
+  const X = snap(d.px), Y = snap(d.py), F = d.frames, f = d.pose === 'walk' && Math.floor(d.walkT * 10) % 2 ? 'B' : 'A';
   let sx = X - 1, sy = Y + 1;
   if (d.dir !== 'left' && d.dir !== 'right') { sx = X; sy = Y; }
   blit(F[d.dir + f], sx, sy);
@@ -1367,7 +1372,7 @@ function drawWall() {
 // ---------------------------------------------------------------- people drawing
 function drawPerson(w) {
   if (w.hidden) return;
-  const X = Math.round(w.px), Y = Math.round(w.py), F = w.frames;
+  const X = snap(w.px), Y = snap(w.py), F = w.frames;   // half-pixel positions when supersampling
   let sx = X - 2;
   let c, sy, view;
   if (w.seated) {
@@ -1410,7 +1415,7 @@ function drawBubble(w) {
   for (let j = 0; j < 5; j++) for (let i = 0; i < 5; i++) if (rows[j] & (16 >> i)) g.fillRect(bx + 3 + i, by + 2 + j, 1, 1);
 }
 function drawRoomba() {
-  const x = Math.round(roomba.px), y = Math.round(roomba.py) + 1, on = !(roomba.tx === DOCK.x && roomba.ty === DOCK.y);
+  const x = snap(roomba.px), y = snap(roomba.py) + 1, on = !(roomba.tx === DOCK.x && roomba.ty === DOCK.y);
   R(x, y - 1, 8, 8, OUT); R(x - 1, y, 10, 6, OUT); R(x, y, 8, 6, '#3a3f55'); R(x + 1, y - 0, 6, 6, '#3a3f55'); R(x + 2, y + 1, 4, 3, '#55608a');
   P(x + 4, y, on ? ((TIME * 3 | 0) % 2 ? '#7fe0b0' : '#2f9a6a') : '#f5b93a');
   if (on) lights.push({ x: x + 4, y: y + 3, r: 6, a: 0.6, c: '#7fe0b0' });
@@ -1426,7 +1431,7 @@ function lighting() {
   const inDark = occupied ? 0 : Math.min(0.85, 0.06 + 0.72 * (1 - day));   // office lights follow occupancy
   if (outDark < 0.01 && inDark < 0.01) return;
   const L = lc.x;
-  L.globalCompositeOperation = 'source-over'; L.setTransform(1, 0, 0, 1, 0, 0);
+  L.globalCompositeOperation = 'source-over'; L.setTransform(SS, 0, 0, SS, 0, 0);
   L.clearRect(0, 0, VW, VH);
   L.fillStyle = `rgba(10,12,40,${outDark})`; L.fillRect(0, 0, VW, VH);
   const indoor = [[OX + 45, OY - 22, GX * C8 - 42, GY * C8 + 26], [0, OY + 24 * C8 - 11, OX + 48, 4 * C8 + 15]];   // our office + the hallway
@@ -1540,6 +1545,61 @@ function drawSpeech() {
   c.restore();
 }
 
+// ---------------------------------------------------------------- Scale2x / EPX smoothing on the GPU
+// Pixel-art aware upscale: each art pixel becomes 2x2 and a corner takes a neighbour's colour when two
+// neighbours agree, rounding off stair-stepped diagonals while keeping flat retro colours (less blocky on a TV).
+// Runs as a WebGL shader so the frame never leaves the graphics card; without WebGL it falls back to plain
+// sharp scaling. ?smooth=0 turns it off.
+const SMOOTH = params.get('smooth') !== '0';
+const EPX_FRAG = `precision mediump float;
+uniform sampler2D t; uniform vec2 size; varying vec2 uv;
+vec4 at(vec2 p) { return texture2D(t, (clamp(p, vec2(0.0), size - 1.0) + 0.5) / size); }
+bool eq(vec4 a, vec4 b) { return all(lessThan(abs(a - b), vec4(0.002))); }
+void main() {
+  vec2 f = uv * size, p = floor(f), q = f - p;
+  vec4 P = at(p), A = at(p + vec2(0.0, -1.0)), B = at(p + vec2(1.0, 0.0)), C = at(p + vec2(-1.0, 0.0)), D = at(p + vec2(0.0, 1.0));
+  vec4 o = P;
+  if (q.y < 0.5) {
+    if (q.x < 0.5) { if (eq(C, A) && !eq(C, D) && !eq(A, B)) o = A; }
+    else           { if (eq(A, B) && !eq(A, C) && !eq(B, D)) o = B; }
+  } else {
+    if (q.x < 0.5) { if (eq(D, C) && !eq(D, B) && !eq(C, A)) o = C; }
+    else           { if (eq(B, D) && !eq(B, A) && !eq(D, C)) o = D; }
+  }
+  gl_FragColor = o;
+}`;
+let epx = null, epxOn = false;   // epx = { cv, gl, tex, uSize } once set up
+function setupEpx_(w, h) {
+  try {
+    const c = epx ? epx.cv : canvas(w, h);
+    c.width = w; c.height = h;
+    if (epx) { epx.gl.viewport(0, 0, w, h); return true; }
+    const gl = c.getContext('webgl', { premultipliedAlpha: false, antialias: false, preserveDrawingBuffer: true });
+    if (!gl) return false;
+    const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
+    const prog = gl.createProgram();
+    gl.attachShader(prog, sh(gl.VERTEX_SHADER, 'attribute vec2 pos; varying vec2 uv; void main() { uv = vec2(pos.x + 1.0, 1.0 - pos.y) * 0.5; gl_Position = vec4(pos, 0.0, 1.0); }'));
+    gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, EPX_FRAG));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+    gl.useProgram(prog);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(prog, 'pos'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+    for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+    gl.viewport(0, 0, w, h);
+    epx = { cv: c, gl, tex, uSize: gl.getUniformLocation(prog, 'size') };
+    return true;
+  } catch (e) { console.warn('EPX smoothing unavailable:', e.message); epx = null; return false; }
+}
+function drawEpx_() {   // scene canvas -> texture -> shader -> epx.cv (screen-sized)
+  const gl = epx.gl;
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, view);
+  gl.uniform2f(epx.uSize, VW, VH);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
 // ---------------------------------------------------------------- frame
 const cv = document.getElementById('c'), mctx = cv.getContext('2d');
 let view = null, vctx = null, scale = 1, vig = null;
@@ -1551,8 +1611,12 @@ function resize() {
   scale = params.has('scale') ? parseFloat(params.get('scale')) : fit < 1 ? fit : (Math.floor(fit) / fit >= 0.85 ? Math.floor(fit) : fit);
   VW = Math.ceil(cv.width / scale); VH = Math.ceil(cv.height / scale);
   OX = Math.floor((VW - GX * C8) / 2); OY = Math.floor((VH - GY * C8) / 2) + 10;
-  view = canvas(VW, VH); vctx = view.getContext('2d');
-  lc.c = canvas(VW, VH); lc.x = lc.c.getContext('2d');
+  // Smoothing: render the art at 1x and let the GPU shader do a Scale2x upscale (less blocky on a TV).
+  // Without it (?smooth=0, no WebGL, or a tiny screen): supersample 2x when the scale is an even whole number.
+  epxOn = SMOOTH && scale >= 2 && setupEpx_(Math.round(VW * scale), Math.round(VH * scale));
+  SS = epxOn ? 1 : params.has('ss') ? Math.max(1, parseInt(params.get('ss')) || 1) : (Number.isInteger(scale) && scale >= 4 && scale % 2 === 0 ? 2 : 1);
+  view = canvas(VW * SS, VH * SS); vctx = view.getContext('2d'); sceneCtx = vctx;
+  lc.c = canvas(VW * SS, VH * SS); lc.x = lc.c.getContext('2d');
   exteriorDirty = true;
   const cx = cv.width / 2, cy = cv.height / 2;
   vig = mctx.createRadialGradient(cx, cy, Math.min(cv.width, cv.height) * 0.35, cx, cy, Math.max(cv.width, cv.height) * 0.7);
@@ -1575,7 +1639,7 @@ function buildDrawables() {
 function render() {
   lights = [];
   if (exteriorDirty) buildExterior();
-  g = vctx; g.setTransform(1, 0, 0, 1, 0, 0); g.imageSmoothingEnabled = false;
+  g = vctx; g.setTransform(SS, 0, 0, SS, 0, 0); g.imageSmoothingEnabled = false;
   g.drawImage(ext, 0, 0);
   const alley = Math.max(0, OY - 22);
   if ((weather === 'cloud' || weather === 'rain') && alley > 0) {   // cloud shadows drifting over the alley
@@ -1598,7 +1662,7 @@ function render() {
   list.sort((a, b) => a.key - b.key);
   for (const it of list) it.draw();
   // weather over the outdoor alley only (it falls a little past the roof edge onto it)
-  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.setTransform(SS, 0, 0, SS, 0, 0);
   if (alley > 2) {
     const n = Math.ceil(drops.length * Math.min(1, alley / 60));
     if (weather === 'rain') {
@@ -1616,10 +1680,10 @@ function render() {
   g.translate(OX, OY);
   if (night > 0.2) for (const [x, y] of lampPositions()) lights.push({ x: x - OX, y: y - OY, r: 30, a: 0.75, c: '#ffd890' });
   lighting();
-  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.setTransform(SS, 0, 0, SS, 0, 0);
   // to the screen, then the lo-fi grade
   mctx.imageSmoothingEnabled = false;
-  mctx.drawImage(view, 0, 0, VW * scale, VH * scale);
+  if (epxOn) { drawEpx_(); mctx.drawImage(epx.cv, 0, 0); } else mctx.drawImage(view, 0, 0, VW * scale, VH * scale);
   if (LOFI) {
     mctx.globalCompositeOperation = 'soft-light'; mctx.fillStyle = 'rgba(255,176,110,0.20)'; mctx.fillRect(0, 0, cv.width, cv.height);
     mctx.globalCompositeOperation = 'source-over'; mctx.fillStyle = vig; mctx.fillRect(0, 0, cv.width, cv.height);
