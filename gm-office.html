@@ -325,8 +325,8 @@ const blockRect = (x0, y0, x1, y1) => { for (let y = y0; y <= y1; y++) for (let 
 const OFFICES = [{ x0: 6, x1: 13 }, { x0: 15, x1: 22 }, { x0: 24, x1: 31 }, { x0: 33, x1: 47 }];
 const DIVIDERS = [14, 23, 32];
 const GLASS_DOORS = [[8, 11], [17, 20], [26, 29], [43, 46]];      // wide sliding patio doors: centred on the small offices, conference one on its right side
-// only the half that slides open is walkable (the left panel is fixed glass)
-const DOOR_CELLS = GLASS_DOORS.flatMap(([a, b]) => Array.from({ length: (b - a + 1) / 2 }, (_, i) => a + (b - a + 1) / 2 + i));
+// only the half that slides open is walkable (the right panel is fixed glass)
+const DOOR_CELLS = GLASS_DOORS.flatMap(([a, b]) => Array.from({ length: (b - a + 1) / 2 }, (_, i) => a + i));
 const BLOCK = { x0: 16, x1: 26, y0: 21, y1: 27, wall: 20 };        // closet (17-19) | washroom (21-25)
 const ROOM_DOORS = [{ x: 21, kind: 'wc' }];   // the closet has no door: nobody goes in
 const LUNCH_RUG = { x0: 36, y0: 19, x1: 41, y1: 26 };
@@ -1331,8 +1331,8 @@ function drawWall() {
   GLASS_DOORS.forEach(([a, b], i) => {
     const dx = a * C8, dw = (b - a + 1) * C8, half = dw / 2;
     if (dx > x) seg(x, dx);
-    // patio door: the left panel is fixed, the right panel slides left over it, opening the right half
-    const o = doorOpen[i], mx = Math.round(dx + half - o * (half - 1));   // moving panel's left edge
+    // patio door: the right panel is fixed, the left panel slides right over it, opening the left half
+    const o = doorOpen[i], mx = Math.round(dx + o * (half - 1));   // moving panel's left edge
     R(dx - 1, y - 8, dw + 2, 15, '#2b2f3a');
     R(dx, y - 7, dw, 13, '#c8a87a');                     // floor showing through the doorway
     const pane = (px, glare) => {
@@ -1341,9 +1341,9 @@ function drawWall() {
       g.fillStyle = 'rgba(255,255,255,0.55)';
       if (glare) { g.fillRect(px + 3, y - 2, 1, 3); g.fillRect(px + 4, y - 5, 1, 3); }
     };
-    pane(dx, true);                                       // fixed panel
+    pane(dx + half, true);                                // fixed panel
     pane(mx, o < 0.6);                                    // sliding panel, in front of the fixed one when open
-    R(mx + 2, y - 2, 1, 3, '#9aa4b0');                    // handle on the sliding panel
+    R(mx + 2, y - 2, 1, 3, '#9aa4b0');                    // handle on the sliding panel (its open edge)
     R(dx, y + 5, dw, 1, '#3a3f4a');
     x = (b + 1) * C8;
   });
