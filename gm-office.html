@@ -340,11 +340,11 @@ const WHITE_DESK = { top: '#f3f3ef', frame: '#c08850', front: '#b97a45', legs: '
 const WHITE_TABLE = { top: '#f6f6f2', frame: '#d8d8d2', front: '#e6e6e0', legs: '#3a3f4a' };
 const BAR_TABLE = { top: '#c8905a', frame: '#a86b3a', front: '#8a5a30', legs: '#3a3f4a' };
 const TABLES = [
-  { x0: 6, x1: 7, y0: 10, y1: 19, s: WHITE_DESK, mid: false, grow: [0, 2] },   // bank 1 (along the left wall, runs a bit long at the bottom)
-  { x0: 15, x1: 17, y0: 10, y1: 16, s: WHITE_DESK, mid: true, grow: [1, 1] },   // bank 2
-  { x0: 25, x1: 27, y0: 10, y1: 16, s: WHITE_DESK, mid: true, grow: [1, 1] },   // bank 3
-  { x0: 35, x1: 37, y0: 10, y1: 16, s: WHITE_DESK, mid: true, grow: [1, 1] },   // bank 4
-  { x0: 46, x1: 47, y0: 10, y1: 14, s: WHITE_DESK, mid: false, grow: [2, 0] },   // bank 5 (right wall)
+  { x0: 6, x1: 7, y0: 10, y1: 19, s: WHITE_DESK, mid: false, grow: [0, 4] },   // bank 1 (along the left wall, runs a bit long at the bottom)
+  { x0: 15, x1: 17, y0: 10, y1: 16, s: WHITE_DESK, mid: true, grow: [3, 3] },   // bank 2
+  { x0: 25, x1: 27, y0: 10, y1: 16, s: WHITE_DESK, mid: true, grow: [3, 3] },   // bank 3
+  { x0: 35, x1: 37, y0: 10, y1: 16, s: WHITE_DESK, mid: true, grow: [3, 3] },   // bank 4
+  { x0: 46, x1: 47, y0: 10, y1: 14, s: WHITE_DESK, mid: false, grow: [4, 0] },   // bank 5 (right wall)
   // small offices: an L-desk (two desks) against the right wall: one runs down the wall, the other comes off its bottom end
   ...OFFICES.slice(0, 3).flatMap(o => [{ x0: o.x1, x1: o.x1, y0: 0, y1: 3, s: WHITE_DESK }, { x0: o.x1 - 3, x1: o.x1 - 1, y0: 3, y1: 3, s: WHITE_DESK }]),
   { x0: 6, x1: 6, y0: 4, y1: 6, s: WHITE_DESK },                     // office 1: second desk on the left wall
