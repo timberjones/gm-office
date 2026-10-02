@@ -29,10 +29,10 @@
   URL params:
     (headcount follows the weekday in Eastern time: Tue/Thu 80-95% of the 31 desks, Mon/Wed/Fri 10-30%, weekends empty)
     ?day=tue        preview another weekday              ?people=20  force today's headcount
-    ?weather=rain   force sun | cloud | rain | snow     (default: live OpenWeather for ?city, default Montreal)
+    ?weather=rain   force sun | cloud | rain | snow     (default: live weather from the feed, Montreal)
     ?time=14:30     start the clock at that time and let it run (also 2:30pm, 14)
     ?hour=14        freeze the clock (decimal ok)        ?speed=60  run the clock N times faster
-    ?tz=America/Chicago   clock time zone                ?city=Toronto,ca
+    ?tz=America/Chicago   clock time zone (weather city is set in the Apps Script: WEATHER_CITY)
     ?scale=4        force the pixel scale                ?lofi=0    no warm tint / vignette
     ?seed=N         seed the randomness                  ?dogs=1    bring the poodles in right away (9:00-16:30)
     ?chat=0         no speech bubbles at all              ?feed=0    don't read the live activity feed
@@ -43,8 +43,6 @@
 const params = new URLSearchParams(location.search);
 const PEOPLE = params.has('people') ? Math.max(0, parseInt(params.get('people')) || 0) : null;   // override today's headcount
 const TZ = params.get('tz') || 'America/Toronto';
-const CITY = params.get('city') || 'Montreal,ca';
-const WEATHER_KEY = params.get('key') || '';   // OpenWeather key (same as GM yard)
 const LOFI = params.get('lofi') !== '0';
 const FPS = 30;
 const C8 = 8, GX = 48, GY = 28;          // 8px grid cells; x 0-5 is the entrance corridor, x 6-47 the office
@@ -104,9 +102,9 @@ function daylight(h) {
 const WEATHERS = ['sun', 'cloud', 'rain', 'snow'];
 let weather = WEATHERS.includes(params.get('weather')) ? params.get('weather') : 'sun';
 const weatherForced = WEATHERS.includes(params.get('weather'));
-const owmToWeather = id => id >= 600 && id < 700 ? 'snow' : id >= 200 && id < 600 ? 'rain' : (id === 800 || id === 801) ? 'sun' : 'cloud';
-const OWM_URL = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(CITY)}&appid=${WEATHER_KEY}`;
-// Speech feed: Apps Script web app, refreshed every 6 h from Redash. Public and email-free. ?feed=0 turns it off, ?feed=<url> overrides.
+// Speech + weather feed: Apps Script web app. Speech refreshes every 6 h from Redash; the window weather
+// (sun | cloud | rain | snow) comes from OpenWeather via the same web app, so no API key lives in this page.
+// Public and email-free. ?feed=0 turns it off, ?feed=<url> overrides.
 const FEED_URL = params.get('feed') === '0' ? null : (params.get('feed') || 'https://script.google.com/macros/s/AKfycbxuD6OJJPCtIqPTPoDGa4DD95pH6j_lNowkOir2TzLUx3K0xCwuY3PsC0sriTjo0Aq3VA/exec');
 let feed = null;   // { ok, updated, feed: [ { user_id, speech: [...] }, ... ] }
 async function getJson_(url, ms) {   // null on any failure (offline, timeout, non-2xx, bad JSON)
@@ -117,22 +115,16 @@ async function getJson_(url, ms) {   // null on any failure (offline, timeout, n
     return r.ok ? await r.json() : null;
   } catch (e) { return null; }
 }
-// Start both downloads right away, before any sprites are built, so they arrive while the page sets up.
-let wxReq = !weatherForced && WEATHER_KEY ? getJson_(OWM_URL, 8000) : null;
+// Start the download right away, before any sprites are built, so it arrives while the page sets up.
 let feedReq = FEED_URL ? getJson_(FEED_URL, 15000) : null;
-async function fetchWeather() {   // true = done (or nothing to do), false = try again soon
-  if (weatherForced || !WEATHER_KEY) return true;
-  const o = await (wxReq || getJson_(OWM_URL, 8000)); wxReq = null;
-  if (!o || !o.weather) return false;
-  const wx = owmToWeather(o.weather[0] ? o.weather[0].id : 800);
-  if (wx !== weather) { weather = wx; exteriorDirty = true; }
-  return true;
-}
-async function fetchFeed() {
+async function fetchFeed() {   // true = got it (or nothing to do), false = try again soon
   if (!FEED_URL) return true;
   const j = await (feedReq || getJson_(FEED_URL, 15000)); feedReq = null;
-  if (j && j.ok && Array.isArray(j.feed)) { feed = j; return true; }
-  return false;   // keep the last good feed
+  if (!(j && j.ok && Array.isArray(j.feed))) return false;   // keep the last good feed + weather
+  feed = j;
+  const wx = j.weather && j.weather.now;
+  if (!weatherForced && WEATHERS.includes(wx) && wx !== weather) { weather = wx; exteriorDirty = true; }
+  return true;
 }
 // Poll every `every` ms once it works; until then retry fast (30 s, 1, 2, 4, then every 5 min) so a TV that
 // boots before the Wi-Fi is up doesn't sit without speech / weather for 15 minutes.
@@ -1660,8 +1652,7 @@ addEventListener('keydown', e => {
   else if (k === 'w') { weather = WEATHERS[(WEATHERS.indexOf(weather) + 1) % 4]; exteriorDirty = true; }
   else if (k === 'f') { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); }
 });
-keepFresh_(fetchWeather, 15 * 60 * 1000);
-keepFresh_(fetchFeed, 15 * 60 * 1000);   // the sheet itself only refreshes every 6 h
+keepFresh_(fetchFeed, 15 * 60 * 1000);   // speech changes every 6 h, the weather every 15 min
 setInterval(() => { MONTH = zoneNow().month || MONTH; }, 3600 * 1000);
 setInterval(pickRoster, 60 * 1000);   // new day: a new set of people comes in
 let last = performance.now(), acc = 0;
