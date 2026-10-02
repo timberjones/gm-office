@@ -105,17 +105,45 @@ const WEATHERS = ['sun', 'cloud', 'rain', 'snow'];
 let weather = WEATHERS.includes(params.get('weather')) ? params.get('weather') : 'sun';
 const weatherForced = WEATHERS.includes(params.get('weather'));
 const owmToWeather = id => id >= 600 && id < 700 ? 'snow' : id >= 200 && id < 600 ? 'rain' : (id === 800 || id === 801) ? 'sun' : 'cloud';
-async function fetchWeather() {
-  if (weatherForced || !WEATHER_KEY) return;
+const OWM_URL = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(CITY)}&appid=${WEATHER_KEY}`;
+// Speech feed: Apps Script web app, refreshed every 6 h from Redash. Public and email-free. ?feed=0 turns it off, ?feed=<url> overrides.
+const FEED_URL = params.get('feed') === '0' ? null : (params.get('feed') || 'https://script.google.com/macros/s/AKfycbxuD6OJJPCtIqPTPoDGa4DD95pH6j_lNowkOir2TzLUx3K0xCwuY3PsC0sriTjo0Aq3VA/exec');
+let feed = null;   // { ok, updated, feed: [ { user_id, speech: [...] }, ... ] }
+async function getJson_(url, ms) {   // null on any failure (offline, timeout, non-2xx, bad JSON)
   try {
-    const ac = new AbortController(), tm = setTimeout(() => ac.abort(), 8000);
-    const r = await fetch(`https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(CITY)}&appid=${WEATHER_KEY}`, { signal: ac.signal });
+    const ac = new AbortController(), tm = setTimeout(() => ac.abort(), ms);
+    const r = await fetch(url, { signal: ac.signal, cache: 'no-store' });
     clearTimeout(tm);
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const o = await r.json();
-    const wx = owmToWeather(o.weather && o.weather[0] ? o.weather[0].id : 800);
-    if (wx !== weather) { weather = wx; exteriorDirty = true; }
-  } catch (e) { /* keep the last known weather */ }
+    return r.ok ? await r.json() : null;
+  } catch (e) { return null; }
+}
+// Start both downloads right away, before any sprites are built, so they arrive while the page sets up.
+let wxReq = !weatherForced && WEATHER_KEY ? getJson_(OWM_URL, 8000) : null;
+let feedReq = FEED_URL ? getJson_(FEED_URL, 15000) : null;
+async function fetchWeather() {   // true = done (or nothing to do), false = try again soon
+  if (weatherForced || !WEATHER_KEY) return true;
+  const o = await (wxReq || getJson_(OWM_URL, 8000)); wxReq = null;
+  if (!o || !o.weather) return false;
+  const wx = owmToWeather(o.weather[0] ? o.weather[0].id : 800);
+  if (wx !== weather) { weather = wx; exteriorDirty = true; }
+  return true;
+}
+async function fetchFeed() {
+  if (!FEED_URL) return true;
+  const j = await (feedReq || getJson_(FEED_URL, 15000)); feedReq = null;
+  if (j && j.ok && Array.isArray(j.feed)) { feed = j; return true; }
+  return false;   // keep the last good feed
+}
+// Poll every `every` ms once it works; until then retry fast (30 s, 1, 2, 4, then every 5 min) so a TV that
+// boots before the Wi-Fi is up doesn't sit without speech / weather for 15 minutes.
+function keepFresh_(fn, every) {
+  let retry = 30000;
+  const run = async () => {
+    const ok = await fn();
+    setTimeout(run, ok ? every : retry);
+    retry = ok ? 30000 : Math.min(retry * 2, 5 * 60 * 1000);
+  };
+  run();
 }
 
 // colour helpers
@@ -155,14 +183,28 @@ function outline(c) {
   x.putImageData(id, 0, 0);
 }
 function mk(w, h, fn) { const c = canvas(w + 2, h + 2), save = g; g = c.getContext('2d'); g.translate(1, 1); fn(); g = save; outline(c); return c; }
+// Character-map sprite, built straight into an ImageData (pixels + 1px navy outline) and written once.
+// Drawing each pixel and then reading the canvas back for the outline cost ~55 ms per person (~0.9 s at startup).
+const RGB_CACHE = new Map();
+const rgbOf = c => { let v = RGB_CACHE.get(c); if (!v) { v = hex(c); RGB_CACHE.set(c, v); } return v; };
 function bakeRows(rows, pal, flip) {
-  const h = rows.length, w = rows[0].length, c = canvas(w + 2, h + 2), x = c.getContext('2d');
+  const h = rows.length, w = rows[0].length, W = w + 2, H = h + 2;
+  const img = new ImageData(W, H), d = img.data, on = new Uint8Array(W * H);
+  const put = (k, rgb) => { d[k * 4] = rgb[0]; d[k * 4 + 1] = rgb[1]; d[k * 4 + 2] = rgb[2]; d[k * 4 + 3] = 255; };
   for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
     const col = pal[rows[j][i]];
     if (!col) continue;
-    x.fillStyle = col; x.fillRect(1 + (flip ? w - 1 - i : i), 1 + j, 1, 1);
+    const k = (1 + j) * W + 1 + (flip ? w - 1 - i : i);
+    on[k] = 1; put(k, rgbOf(col));
   }
-  outline(c); return c;
+  const out = rgbOf(OUT);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const k = y * W + x;
+    if (!on[k] && ((x > 0 && on[k - 1]) || (x < W - 1 && on[k + 1]) || (y > 0 && on[k - W]) || (y < H - 1 && on[k + W]))) put(k, out);
+  }
+  const c = canvas(W, H);
+  c.getContext('2d').putImageData(img, 0, 0);
+  return c;
 }
 const FONT = { W: [5, 5, 7, 7, 5], C: [3, 4, 4, 4, 3] };
 function glyphs(s, x, y, c) {
@@ -823,7 +865,7 @@ function* courierLife() {
 function* courierVisit() {
   const look = { hair: pick(HAIRS), skin: irnd(0, 4), shirt: pick(['#ec8f2b', '#d9453b', '#22b573', '#2a2238']), pants: pick(PANTS), style: 'short', hat: pick(['#d9453b', '#22b573', '#2a2238', '#ec8f2b']) };
   const row = chance(0.5) ? 25 : 26;
-  Object.assign(courier, { frames: buildFrames(look), look, present: true, hidden: false, bag: true, handed: false, px: hallX(), py: row * C8, tx: -1, ty: -1, pose: 'walk' });
+  Object.assign(courier, { frames: buildFrames(look), look, present: true, hidden: false, bag: true, handed: false, leaving: false, px: hallX(), py: row * C8, tx: -1, ty: -1, pose: 'walk' });
   yield* walkStraight(courier, 0, row * C8);
   courier.tx = 0; courier.ty = row;
   const arrived = TIME, end = TIME + rnd(70, 120);
@@ -838,6 +880,7 @@ function* courierVisit() {
     const t0 = TIME + rnd(6, 11);
     yield () => courier.handed || TIME >= t0;
   }
+  courier.leaving = true;   // nobody can grab the bag after this
   sayLine_(courier, courier.handed ? pick(['Enjoy!', 'Have a good one!', 'Enjoy your lunch!']) : "I'll leave it right here!", true);
   courier.bag = false;
   yield 1.8;
@@ -860,9 +903,9 @@ function* fetchDelivery(w) {
   standUp(w); yield 0.3;
   const free = ([x, y]) => !workers.some(q => q !== w && q.present && q.tx === x && q.ty === y);
   const cells = FLOOR.filter(([x, y]) => Math.abs(x - c.tx) + Math.abs(y - c.ty) === 1 && free([x, y]));
-  if (c.present && !c.handed && cells.length && (yield* walkTo(w, cells[0][0], cells[0][1]))) {
+  if (c.present && !c.handed && !c.leaving && cells.length && (yield* walkTo(w, cells[0][0], cells[0][1]))) {
     w.dir = c.tx > w.tx ? 'right' : c.tx < w.tx ? 'left' : c.ty < w.ty ? 'up' : 'down';
-    if (c.present && !c.handed) {
+    if (c.present && !c.handed && !c.leaving) {
       sayLine_(w, pick(['Thanks!', 'Oh nice, lunch is here!', 'That smells amazing.', "That's ours, thank you!"]), true);
       c.handed = true; c.bag = false; w.bag = true;
       yield 2.2;
@@ -1405,19 +1448,6 @@ const CHAT = params.get('chat') !== '0';
 let speech = null, chatT = rnd(15, 40), lastText = '';
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-// Apps Script web app, refreshed every 6 h from Redash. Public and email-free. ?feed=0 turns it off, ?feed=<url> overrides.
-const FEED_URL = params.get('feed') === '0' ? null : (params.get('feed') || 'https://script.google.com/macros/s/AKfycbxuD6OJJPCtIqPTPoDGa4DD95pH6j_lNowkOir2TzLUx3K0xCwuY3PsC0sriTjo0Aq3VA/exec');
-let feed = null;   // { ok, updated, feed: [ { user_id, seat, speech: [...] }, ... ] }
-async function fetchFeed() {
-  if (!FEED_URL) return;
-  try {
-    const ac = new AbortController(), tm = setTimeout(() => ac.abort(), 15000);
-    const r = await fetch(FEED_URL, { signal: ac.signal, cache: 'no-store' });
-    clearTimeout(tm);
-    const j = await r.json();
-    if (j && j.ok && Array.isArray(j.feed)) feed = j;
-  } catch (e) { /* keep the last good feed */ }
-}
 // Hello / goodbye: lines from the sheet's One-liners tab under User ID "morning" / "bye", else these defaults.
 const GREETINGS = {
   morning: ['Good morning!', 'Morning, team!', 'Coffee first, then greatness.', "Let's make today count!", 'Rise and grind!'],
@@ -1616,7 +1646,7 @@ function step(dt) {
 buildSprites();
 buildLayers();
 buildDrawables();
-for (const w of workers) if (wantPresent(w)) { w.present = true; sit(w, w.home); }   // already at work when the page opens
+for (const w of workers) if (wantPresent(w)) { w.present = true; sit(w, w.home); w.greeted = rosterKey; }   // already at work when the page opens (and already said good morning)
 const cos = [...workers.map(w => new Co(() => life(w))), new Co(roombaLife), new Co(() => dogLife(dogs[0], dogs[1])), new Co(() => dogLife(dogs[1], dogs[0])), new Co(courierLife)];
 if (params.get('dogs') === '1') dogs.forEach(d => { d.follow = true; });   // preview: both poodles come in right away
 resize();
@@ -1630,8 +1660,8 @@ addEventListener('keydown', e => {
   else if (k === 'w') { weather = WEATHERS[(WEATHERS.indexOf(weather) + 1) % 4]; exteriorDirty = true; }
   else if (k === 'f') { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); }
 });
-fetchWeather(); setInterval(fetchWeather, 15 * 60 * 1000);
-fetchFeed(); setInterval(fetchFeed, 15 * 60 * 1000);   // the sheet itself only refreshes every 6 h
+keepFresh_(fetchWeather, 15 * 60 * 1000);
+keepFresh_(fetchFeed, 15 * 60 * 1000);   // the sheet itself only refreshes every 6 h
 setInterval(() => { MONTH = zoneNow().month || MONTH; }, 3600 * 1000);
 setInterval(pickRoster, 60 * 1000);   // new day: a new set of people comes in
 let last = performance.now(), acc = 0;
