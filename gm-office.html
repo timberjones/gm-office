@@ -35,7 +35,7 @@
     ?tz=America/Chicago   clock time zone (weather city is set in the Apps Script: WEATHER_CITY)
     ?scale=4        force the pixel scale                ?lofi=0    no warm tint / vignette
     ?fps=30         frame rate (default 60)              ?smooth=0  no Scale2x smoothing (falls back to 2x supersampling)
-    ?hd=0           plain 1x sprites (no rims / pre-smoothed edges)    ?hd=all  everyone in HD detail (prototype: product + CFO)
+    ?hd=0           plain 1x sprites (no HD detail, rims or pre-smoothed edges)
     ?seed=N         seed the randomness                  ?dogs=1    bring the poodles in right away (9:00-16:30)
     ?chat=0         no speech bubbles at all              ?feed=0    don't read the live activity feed
   Keys: N night, D day, C real clock, W cycle weather, B say a one-liner now, F fullscreen
@@ -237,6 +237,22 @@ function x2Layer_(c) {
   o.getContext('2d').putImageData(img, 0, 0);
   return o;
 }
+// Static furniture drawn with R/P (already outlined by hand), captured once into a sprite: the 2x copy gets
+// Scale2x edges and rims like everything else. { c, x0, y0 } = the sprite and where its top-left sits.
+function capture_(x0, y0, w, h, fn) {
+  const c = canvas(w, h), save = g; g = c.getContext('2d', RD); g.translate(-x0, -y0); fn(); g = save;
+  if (ART < 2) return { c, x0, y0 };
+  const px = new Uint32Array(c.getContext('2d').getImageData(0, 0, w, h).data.buffer), out = pk(OUT);
+  for (let i = 0; i < px.length; i++) px[i] = px[i] >>> 24 === 0 ? 0 : px[i] === out ? EDGE : px[i];
+  const hi = pxCanvas_(epx2_(px, w, h), w * 2, h * 2, 2);
+  hi.lo = c;
+  return { c: hi, x0, y0 };
+}
+// draw part (sx, sy, sw, sh in art px) of a capture, or all of it at an offset
+function blitCap_(cap, sx, sy, sw, sh) {
+  const hi = cap.c.lo && g === sceneCtx && SS >= 2, c = hi ? cap.c : (cap.c.lo || cap.c), k = hi ? 2 : 1;
+  g.drawImage(c, (sx - cap.x0) * k, (sy - cap.y0) * k, sw * k, sh * k, sx, sy, sw, sh);
+}
 // procedural sprite: draw with R/P inside fn
 function mk(w, h, fn) {
   const c = canvas(w + 2, h + 2), save = g; g = c.getContext('2d', RD); g.translate(1, 1); fn(); g = save;
@@ -256,8 +272,7 @@ function bakeRows(rows, pal, flip) {
 // ---- HD people: the 12x16 character map is Scale2x'd AS CHARACTERS (so every pixel keeps its meaning), then
 // a detail pass adds what only fits at half-pixel size: eye glints, brows, mouth, cheeks, hair strands, collar,
 // belt buckle, shoe shine. Same silhouettes and outline as everyone else, twice the detail.
-// Prototype: only looks with hd:true (?hd=all = everyone, ?hd=0 = nobody).
-const HD_ALL = params.get('hd') === 'all';
+// Everyone gets it on the 2x scene; ?hd=0 = the plain 1x look.
 const CH = c => c.charCodeAt(0);
 function detailHD_(X, w, h, view) {
   const at = (x, y) => x >= 0 && y >= 0 && x < w && y < h ? X[y * w + x] : 0;
@@ -278,7 +293,8 @@ function detailHD_(X, w, h, view) {
     set(x + 1, y + 3, 'm', 's');
   }
   // hair: a shadow where it meets the face, a short sheen near the crown
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (at(x, y) === hh && (at(x, y + 1) === s || at(x, y + 1) === e)) X[y * w + x] = CH('H');
+  const brow = eyes.length ? eyes[0][1] : h;   // only the hairline, not beards / goatees
+  for (let y = 0; y < brow; y++) for (let x = 0; x < w; x++) if (at(x, y) === hh && (at(x, y + 1) === s || at(x, y + 1) === e)) X[y * w + x] = CH('H');
   let top = -1;
   for (let y = 0; y < h && top < 0; y++) for (let x = 0; x < w; x++) if (at(x, y) === hh) { top = y; break; }
   if (top >= 0) {
@@ -421,7 +437,7 @@ function buildFrames(m) {
   const mod = (base, view) => { const r = base.map(s => s.split('')); hairMods(r, view, m); return r.map(a => a.join('')); };
   const legs = (rows, l) => rows.slice(0, 13).concat(l);
   const down = mod(DOWN, 'down'), up = mod(UP, 'up'), right = mod(RIGHT, 'right');
-  const F = {}, hd = ART >= 2 && (m.hd || HD_ALL);
+  const F = {}, hd = ART >= 2;
   if (hd) Object.assign(pal, { W: '#fdfcf6', H: shade(m.hair, 0.7), L: mixC(m.hair, '#ffffff', 0.28), C: mixC(m.shirt, '#ffffff', 0.4),
     m: mixC(sk[1], '#a8505a', 0.35), B: shade(m.pants, 0.6), G: '#d8b24a', K: '#5a5470' });
   // stand/walk frames stretch at the hips (row 13), seated frames at the chest (row 9)
@@ -630,7 +646,7 @@ const world = { hour: hourNow() };
 const DESKBOUND = [['type', 64], ['call', 24], ['meeting', 1], ['coffee', 3], ['water', 2], ['wc', 2]];   // rarely leaves the desk
 const ROLES = {
   cfo: { acts: DESKBOUND, talk: 0.5, fixed: true, in: [7.2, 7.4], out: [18.3, 18.6], lunch: 'desk',
-    look: { hair: '#6b4a2a', skin: 0, shirt: '#3b5a96', pants: '#2a2238', style: 'short', beard: true, hd: true } },
+    look: { hair: '#6b4a2a', skin: 0, shirt: '#3b5a96', pants: '#2a2238', style: 'short', beard: true } },
   coo: { acts: DESKBOUND, talk: 0.5, fixed: true, in: [7.9, 8.3], out: [17.0, 17.5], lunch: 'desk',
     look: { hair: '#1a1a24', skin: 2, shirt: '#e8506a', pants: '#2f3a5c', style: 'long', build: 'small' } },
   ceo: { acts: DESKBOUND, talk: 0.5, fixed: true, in: [7.9, 8.4], out: [17.0, 17.6], lunch: 'desk',
@@ -639,7 +655,7 @@ const ROLES = {
   am: { talk: 1.5, acts: ACTS },
   intern: { talk: 0, acts: [['type', 72], ['coffee', 6], ['water', 4], ['wc', 3], ['fridge', 2], ['sink', 2]] },
   staff: { talk: 1, acts: ACTS },
-  product: { talk: 1, fixed: true, days: ['tue', 'thu'], acts: ACTS, look: { hair: '#1a1a24', skin: 1, shirt: '#22b573', pants: '#2f3a5c', style: 'short', hd: true } },
+  product: { talk: 1, fixed: true, days: ['tue', 'thu'], acts: ACTS, look: { hair: '#1a1a24', skin: 1, shirt: '#22b573', pants: '#2f3a5c', style: 'short' } },
   // CFO's team member at the second desk in the CFO's office: no user id; all he ever says is his one line
   cfoteam: { talk: 0, lines: ['nto nto nto...'], acts: [['type', 62], ['call', 18], ['coffee', 6], ['water', 4], ['wc', 3], ['fridge', 2]],
     look: { hair: '#1a1a24', skin: 2, shirt: '#5b6a95', pants: '#2a2238', style: 'short' } },
@@ -1287,7 +1303,13 @@ function drawClockHands() {
 }
 
 // ---------------------------------------------------------------- furniture drawing (row by row for depth)
-function drawTableRow(t, r) {
+function drawTableRow(t, r) {   // one row of the table's cached sprite (rows sort separately so people sit between them)
+  const gl = t.grow ? t.grow[0] : 0, gr = t.grow ? t.grow[1] : 0, x = t.x0 * C8 - gl - 1, w = (t.x1 - t.x0 + 1) * C8 + gl + gr + 2;
+  if (!t.cap) t.cap = capture_(x, t.y0 * C8 - 1, w, (t.y1 - t.y0 + 1) * C8 + 15, () => { for (let k = t.y0; k <= t.y1; k++) drawTableRowRaw_(t, k); });
+  const y0 = r === t.y0 ? r * C8 - 1 : r * C8, y1 = r === t.y1 ? (r + 1) * C8 + 14 : (r + 1) * C8;
+  blitCap_(t.cap, x, y0, w, y1 - y0);
+}
+function drawTableRowRaw_(t, r) {
   // grow = [left, right] extra px: the work islands are drawn a little wider than their grid cells (tighter aisles, like the real office)
   const gl = t.grow ? t.grow[0] : 0, gr = t.grow ? t.grow[1] : 0;
   const s = t.s, x = t.x0 * C8 - gl, w = (t.x1 - t.x0 + 1) * C8 + gl + gr, y = r * C8, first = r === t.y0, last = r === t.y1;
@@ -1358,8 +1380,16 @@ function drawSeatKit(s) {
     else { box(px, py, 4, 3, '#9aa4b0'); R(px, py, 4, 1, '#c8ccd2'); }
   }
 }
-function drawChair(s) {
-  const x = s.x * C8 + (s.back || 0), y = s.y * C8, c = s.chair, d = shade(c, 0.78), base = s.kind === 'desk' ? '#3a3f4a' : '#d8d8d2';   // back = pulled out from a widened desk
+const CHAIR_CAPS = new Map();
+function drawChair(s) {   // chairs come in a few kinds: each is drawn once and cached
+  const key = [s.face, s.chair, s.kind, !!s.stool].join('|');
+  let cap = CHAIR_CAPS.get(key);
+  if (!cap) { cap = capture_(-2, -6, 13, 15, () => drawChairRaw_(s, 0, 0)); CHAIR_CAPS.set(key, cap); }
+  const x = s.x * C8 + (s.back || 0), y = s.y * C8;
+  g.save(); g.translate(x, y); blitCap_(cap, -2, -6, 13, 15); g.restore();
+}
+function drawChairRaw_(s, x, y) {
+  const c = s.chair, d = shade(c, 0.78), base = s.kind === 'desk' ? '#3a3f4a' : '#d8d8d2';   // back = pulled out from a widened desk
   if (s.stool) {     // bar stool: round seat on a tall post with a foot ring
     R(x, y + 2, 8, 4, OUT); R(x + 1, y + 3, 6, 2, '#3a3f4a'); R(x + 1, y + 3, 6, 1, '#55608a');
     R(x + 3, y + 6, 2, 2, '#9aa4b0'); R(x + 1, y + 7, 6, 1, '#9aa4b0');
@@ -1373,7 +1403,18 @@ function drawChair(s) {
   } else if (s.face === 'down') { box(x, y - 5, 8, 7, c); R(x, y + 1, 8, 1, d); }
   else { box(x, y + 2, 8, 5, c); R(x, y + 2, 8, 1, shade(c, 1.08)); R(x + 3, y + 7, 2, 1, base); }
 }
+const STATIC_PROPS = ['sidetable', 'credenza', 'bookcase', 'silver', 'storage', 'rack'];
 function drawProp(p) {
+  const [k, gx, gy, w, h] = p;
+  if (STATIC_PROPS.includes(k)) {   // no animation: drawn once into a cached sprite
+    const x0 = gx * C8 - 3, y0 = (gy + h) * C8 - Math.max(h * C8, 20) - 4, cw = w * C8 + 6, ch = (gy + h) * C8 + 3 - y0;
+    if (!p.cap) p.cap = capture_(x0, y0, cw, ch, () => drawPropRaw_(p));
+    blitCap_(p.cap, x0, y0, cw, ch);
+    return;
+  }
+  drawPropRaw_(p);
+}
+function drawPropRaw_(p) {
   const [k, gx, gy, w, h] = p, x = gx * C8, y = gy * C8, bottom = (gy + h) * C8;
   switch (k) {
     case 'post': blit(SPR.post, x + 1, bottom - 22); break;
