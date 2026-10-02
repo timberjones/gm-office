@@ -1103,13 +1103,13 @@ function* fetchDelivery(w) {
   yield* goHome(w);
   w.bag = false;
 }
-// one speech bubble at a time; greetings / deliveries can cut in (force)
+// a one-off line (courier, deliveries); force = replace what this person is saying right now
 function sayLine_(w, text, force) {
   if (!CHAT || w.hidden) return;
-  if (!force && speech && speech.t < 2.5) return;
+  const cur = speakingNow_(w);
+  if (!force && cur && cur.t < 2.5) return;
   if (w.role === 'am') text = text.toUpperCase();
-  w.bubble = null;
-  speech = { w, text, t: 0, life: 3 + text.length * 0.06, greet: true };
+  say_(w, text, 3 + text.length * 0.06, true);
 }
 
 // ---------------------------------------------------------------- furniture sprites
@@ -1752,7 +1752,16 @@ function lighting() {
 // each person's workspace numbers as sentences + one-liners typed into its One-liners tab
 // ("all" lines can be said by anyone). Drawn on the screen canvas with a system font so it stays crisp.
 const CHAT = params.get('chat') !== '0';
-let speech = null, chatT = rnd(10, 30), lastText = '';
+// several people can talk at once (one bubble each, up to MAX_BUBBLES; the oldest gives way)
+const MAX_BUBBLES = 4;
+let speeches = [], chatT = rnd(10, 30), lastText = '';
+const speakingNow_ = w => speeches.find(s => s.w === w);
+function say_(w, text, life, greet) {
+  w.bubble = null;
+  speeches = speeches.filter(s => s.w !== w);
+  if (speeches.length >= MAX_BUBBLES) speeches.shift();
+  speeches.push({ w, text, t: 0, life, greet: !!greet });
+}
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 // Hello / goodbye: lines from the sheet's One-liners tab under User ID "morning" / "bye", else these defaults.
@@ -1762,12 +1771,10 @@ const GREETINGS = {
 };
 function greet_(w, kind) {
   if (!CHAT || w.talk <= 0 || w.hidden) return;                  // interns and HR don't talk
-  if (speech && speech.greet && speech.t < 2.5) return;           // someone else is mid-greeting
   const lines = speechFor_(kind);
   let text = pick(lines.length ? lines : GREETINGS[kind]);
   if (w.role === 'am') text = text.toUpperCase();                 // account managers are loud
-  w.bubble = null;
-  speech = { w, text, t: 0, life: 3 + text.length * 0.06, greet: true };
+  say_(w, text, 3 + text.length * 0.06, true);
 }
 function speechFor_(uid) {
   if (!feed) return [];
@@ -1789,16 +1796,17 @@ function sayRandom() {
   if (fixed.length) pools.push([() => { const w = pick(fixed); return [w, pick(ROLES[w.role].lines)]; }, 1]);
   if (!pools.length) return false;
   let w, text;
-  for (let k = 0; k < 4; k++) { [w, text] = weighted(pools)(); if (text !== lastText) break; }
+  for (let k = 0; k < 8; k++) { [w, text] = weighted(pools)(); if (text !== lastText && !speakingNow_(w)) break; }
+  if (speakingNow_(w)) return false;   // everyone with something to say is already talking
   lastText = text;
-  w.bubble = null;
   if (w.role === 'am') text = text.toUpperCase();   // account managers are loud: ALL CAPS
-  speech = { w, text, t: 0, life: 5 + text.length * 0.08 };   // long enough to notice and read from a distance
+  say_(w, text, 5 + text.length * 0.08);   // long enough to notice and read from a distance
   return true;
 }
 function updateSpeech(dt) {
-  if (speech) { speech.t += dt; if (speech.t >= speech.life || !speech.w.present || speech.w.hidden) speech = null; return; }
-  if (CHAT && (chatT -= dt) <= 0) chatT = sayRandom() ? rnd(45, 90) : rnd(5, 10);   // about one line every 45 s - 1.5 min
+  for (const s of speeches) s.t += dt;
+  speeches = speeches.filter(s => s.t < s.life && s.w.present && !s.w.hidden);
+  if (CHAT && (chatT -= dt) <= 0) chatT = sayRandom() ? rnd(45, 90) : rnd(5, 10);   // a new line every 45 s - 1.5 min, even if others are still talking
 }
 function wrapText(c, text, maxW) {
   const lines = []; let cur = '';
@@ -1807,7 +1815,10 @@ function wrapText(c, text, maxW) {
   return lines;
 }
 function drawSpeech() {
-  const s = speech; if (!s) return;
+  const placed = [];   // bubbles already drawn this frame; a new one that would overlap moves up above them
+  for (const s of speeches.slice().sort((a, b) => b.w.headTop - a.w.headTop)) drawBubble_(s, placed);
+}
+function drawBubble_(s, placed) {
   const c = mctx, hx = (OX + s.w.headX) * scale, hy = (OY + s.w.headTop - 1) * scale;
   const fs = clamp(Math.round(cv.height / 44), 16, 52);   // ~24px on a 1080p TV, ~48px on 4K: readable across the room
   c.save(); c.setTransform(1, 0, 0, 1, 0, 0);
@@ -1815,18 +1826,26 @@ function drawSpeech() {
   const lines = wrapText(c, s.text, fs * 12), lh = Math.round(fs * 1.25), padX = Math.round(fs * 0.7), padY = Math.round(fs * 0.45);
   const tw = Math.ceil(Math.max(...lines.map(l => c.measureText(l).width)));
   const bw = tw + padX * 2, bh = lines.length * lh + padY * 2, tail = Math.round(fs * 0.6);
-  const bx = Math.round(clamp(hx - bw / 2, 6, cv.width - bw - 6)), by = Math.round(Math.max(6, hy - tail - bh));
+  const bx = Math.round(clamp(hx - bw / 2, 6, cv.width - bw - 6));
+  let by = Math.round(Math.max(6, hy - tail - bh));
+  for (let k = 0; k < placed.length; k++) {   // stack above any bubble it would cover
+    const o = placed[k];
+    if (bx < o.x + o.w + 6 && bx + bw + 6 > o.x && by < o.y + o.h + 6 && by + bh + 6 > o.y) { by = o.y - bh - 8; k = -1; }
+  }
+  by = Math.max(6, by);
+  placed.push({ x: bx, y: by, w: bw, h: bh });
   const a = Math.min(1, s.t / 0.25, (s.life - s.t) / 0.5), pop = s.t < 0.25 ? 0.85 + 0.15 * (s.t / 0.25) : 1;
   c.globalAlpha = clamp(a, 0, 1);
   c.translate(hx, hy); c.scale(pop, pop); c.translate(-hx, -hy);
   const ol = Math.max(2, Math.round(scale / 2.5)), st = Math.max(2, Math.round(scale / 1.6));
   const tx = Math.round(clamp(hx, bx + st + tail, bx + bw - st - tail));
+  const stem = Math.max(0, Math.round(hy - (by + bh) - tail));   // a lifted bubble keeps a thin stem down to the speaker
   const body = (grow, col) => {   // pixel-style box with notched corners + a stepped tail down to the speaker
     c.fillStyle = col;
     c.fillRect(bx - grow + st, by - grow, bw + grow * 2 - st * 2, bh + grow * 2);
     c.fillRect(bx - grow, by - grow + st, bw + grow * 2, bh + grow * 2 - st * 2);
     c.fillRect(tx - tail / 2 - grow, by + bh, tail + grow * 2, Math.round(tail * 0.5) + grow);
-    c.fillRect(tx - tail / 4 - grow, by + bh + Math.round(tail * 0.5), tail / 2 + grow * 2, Math.round(tail * 0.5) + grow);
+    c.fillRect(tx - tail / 4 - grow, by + bh + Math.round(tail * 0.5), tail / 2 + grow * 2, Math.round(tail * 0.5) + stem + grow);
   };
   body(ol, '#0b1020'); body(0, '#fffdf5');
   c.fillStyle = 'rgba(0,0,0,0.08)'; c.fillRect(bx + st, by + bh - ol, bw - st * 2, ol);
@@ -2033,7 +2052,7 @@ addEventListener('keydown', e => {
   if (k === 'n') forcedHour = 22;
   else if (k === 'd') forcedHour = 10.5;
   else if (k === 'c') forcedHour = null;
-  else if (k === 'b') { speech = null; sayRandom(); }
+  else if (k === 'b') sayRandom();
   else if (k === 'w') { weather = WEATHERS[(WEATHERS.indexOf(weather) + 1) % 4]; exteriorDirty = true; }
   else if (k === 'f') { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); }
 });
