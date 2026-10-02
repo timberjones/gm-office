@@ -1752,7 +1752,7 @@ function lighting() {
 // each person's workspace numbers as sentences + one-liners typed into its One-liners tab
 // ("all" lines can be said by anyone). Drawn on the screen canvas with a system font so it stays crisp.
 const CHAT = params.get('chat') !== '0';
-let speech = null, chatT = rnd(15, 40), lastText = '';
+let speech = null, chatT = rnd(10, 30), lastText = '';
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 // Hello / goodbye: lines from the sheet's One-liners tab under User ID "morning" / "bye", else these defaults.
@@ -1798,7 +1798,7 @@ function sayRandom() {
 }
 function updateSpeech(dt) {
   if (speech) { speech.t += dt; if (speech.t >= speech.life || !speech.w.present || speech.w.hidden) speech = null; return; }
-  if (CHAT && (chatT -= dt) <= 0) chatT = sayRandom() ? rnd(60, 150) : rnd(5, 10);   // about one line every 1-2.5 min
+  if (CHAT && (chatT -= dt) <= 0) chatT = sayRandom() ? rnd(45, 90) : rnd(5, 10);   // about one line every 45 s - 1.5 min
 }
 function wrapText(c, text, maxW) {
   const lines = []; let cur = '';
