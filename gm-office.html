@@ -340,11 +340,11 @@ const WHITE_DESK = { top: '#f3f3ef', frame: '#c08850', front: '#b97a45', legs: '
 const WHITE_TABLE = { top: '#f6f6f2', frame: '#d8d8d2', front: '#e6e6e0', legs: '#3a3f4a' };
 const BAR_TABLE = { top: '#c8905a', frame: '#a86b3a', front: '#8a5a30', legs: '#3a3f4a' };
 const TABLES = [
-  { x0: 6, x1: 7, y0: 10, y1: 19, s: WHITE_DESK, mid: false },       // bank 1 (along the left wall, runs a bit long at the bottom)
-  { x0: 15, x1: 17, y0: 10, y1: 16, s: WHITE_DESK, mid: true },      // bank 2
-  { x0: 25, x1: 27, y0: 10, y1: 16, s: WHITE_DESK, mid: true },      // bank 3
-  { x0: 35, x1: 37, y0: 10, y1: 16, s: WHITE_DESK, mid: true },      // bank 4
-  { x0: 46, x1: 47, y0: 10, y1: 14, s: WHITE_DESK, mid: false },     // bank 5 (right wall)
+  { x0: 6, x1: 7, y0: 10, y1: 19, s: WHITE_DESK, mid: false, grow: [0, 2] },   // bank 1 (along the left wall, runs a bit long at the bottom)
+  { x0: 15, x1: 17, y0: 10, y1: 16, s: WHITE_DESK, mid: true, grow: [1, 1] },   // bank 2
+  { x0: 25, x1: 27, y0: 10, y1: 16, s: WHITE_DESK, mid: true, grow: [1, 1] },   // bank 3
+  { x0: 35, x1: 37, y0: 10, y1: 16, s: WHITE_DESK, mid: true, grow: [1, 1] },   // bank 4
+  { x0: 46, x1: 47, y0: 10, y1: 14, s: WHITE_DESK, mid: false, grow: [2, 0] },   // bank 5 (right wall)
   // small offices: an L-desk (two desks) against the right wall: one runs down the wall, the other comes off its bottom end
   ...OFFICES.slice(0, 3).flatMap(o => [{ x0: o.x1, x1: o.x1, y0: 0, y1: 3, s: WHITE_DESK }, { x0: o.x1 - 3, x1: o.x1 - 1, y0: 3, y1: 3, s: WHITE_DESK }]),
   { x0: 6, x1: 6, y0: 4, y1: 6, s: WHITE_DESK },                     // office 1: second desk on the left wall
@@ -1007,7 +1007,7 @@ function buildLayers() {
   R(DOCK.x * C8, DOCK.y * C8 + 4, 8, 3, '#9aa4b0');
   // soft shadows under furniture
   const sh = 'rgba(40,20,10,0.18)';
-  for (const t of TABLES) R(t.x0 * C8, (t.y1 + 1) * C8 + 4, (t.x1 - t.x0 + 1) * C8, 2, sh);
+  for (const t of TABLES) { const gl = t.grow ? t.grow[0] : 0, gr = t.grow ? t.grow[1] : 0; R(t.x0 * C8 - gl, (t.y1 + 1) * C8 + 4, (t.x1 - t.x0 + 1) * C8 + gl + gr, 2, sh); }
   for (const [, x, y, w, h] of PROPS) R(x * C8, (y + h) * C8, w * C8, 2, sh);
   R(48, 0, GX * C8 - 48, 2, sh);
   // closet (roofed) on the left, then one large washroom (open view)
@@ -1151,12 +1151,14 @@ function drawClockHands() {
 
 // ---------------------------------------------------------------- furniture drawing (row by row for depth)
 function drawTableRow(t, r) {
-  const s = t.s, x = t.x0 * C8, w = (t.x1 - t.x0 + 1) * C8, y = r * C8, first = r === t.y0, last = r === t.y1;
+  // grow = [left, right] extra px: the work islands are drawn a little wider than their grid cells (tighter aisles, like the real office)
+  const gl = t.grow ? t.grow[0] : 0, gr = t.grow ? t.grow[1] : 0;
+  const s = t.s, x = t.x0 * C8 - gl, w = (t.x1 - t.x0 + 1) * C8 + gl + gr, y = r * C8, first = r === t.y0, last = r === t.y1;
   R(x - 1, y - (first ? 1 : 0), w + 2, 8 + (first ? 1 : 0), OUT);
   R(x, y, w, 8, s.top);
   R(x, y, 1, 8, s.frame); R(x + w - 1, y, 1, 8, s.frame);
   if (first) { R(x, y, w, 1, s.frame); R(x + 1, y + 1, w - 2, 1, '#ffffff'); }
-  if (t.mid) R(x + C8 + 2, y, C8 - 4, 8, shade(s.top, 0.96));
+  if (t.mid) R(x + gl + C8 + 2, y, C8 - 4, 8, shade(s.top, 0.96));   // centre strip stays over the middle cell
   if (last) {
     R(x - 1, y + 8, w + 2, 5, OUT); R(x, y + 8, w, 3, s.front); R(x, y + 8, w, 1, shade(s.front, 1.12));
     R(x, y + 11, 2, 3, s.legs); R(x + w - 2, y + 11, 2, 3, s.legs); P(x - 1, y + 13, OUT); P(x + w, y + 13, OUT);
