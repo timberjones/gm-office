@@ -515,7 +515,7 @@ const TABLES = [
   { x0: 35, x1: 37, y0: 10, y1: 16, s: WHITE_DESK, mid: true, grow: [3, 3] },   // bank 4
   { x0: 46, x1: 47, y0: 10, y1: 14, s: WHITE_DESK, mid: false, grow: [4, 0] },   // bank 5 (right wall)
   // small offices: an L-desk (two desks) against the right wall: one runs down the wall, the other comes off its bottom end
-  ...OFFICES.slice(0, 3).flatMap(o => [{ x0: o.x1, x1: o.x1, y0: 0, y1: 3, s: WHITE_DESK }, { x0: o.x1 - 3, x1: o.x1 - 1, y0: 3, y1: 3, s: WHITE_DESK }]),
+  ...OFFICES.slice(0, 3).flatMap(o => [{ x0: o.x1, x1: o.x1, y0: 0, y1: 3, s: WHITE_DESK }, { x0: o.x1 - 3, x1: o.x1 - 1, y0: 3, y1: 3, s: WHITE_DESK, clutter: true }]),
   { x0: 6, x1: 6, y0: 4, y1: 6, s: WHITE_DESK },                     // office 1: second desk on the left wall
   { x0: 22, x1: 22, y0: 5, y1: 6, s: WHITE_DESK },                   // office 2: second desk on the right wall
   { x0: 31, x1: 31, y0: 5, y1: 6, s: WHITE_DESK },                   // office 3: second desk on the right wall
@@ -1150,7 +1150,7 @@ function buildSprites() {
     R(3, 0, 9, 10, '#1e2130'); R(3, 0, 9, 2, '#3a3f55'); R(5, 3, 5, 2, '#454b58'); R(6, 7, 3, 1, '#9aa4b0');
   });
   SPR.fridge = mk(16, 24, () => {
-    R(0, 0, 16, 24, '#f2f2ee'); R(0, 0, 16, 1, '#ffffff'); R(13, 0, 3, 24, '#d6d6d0'); R(0, 8, 16, 1, '#c8c8c2');
+    R(0, 0, 16, 24, '#f2f2ee'); R(0, 0, 16, 1, '#ffffff'); R(0, 1, 1, 23, '#fbfbf8'); R(13, 0, 3, 24, '#d6d6d0'); R(15, 0, 1, 24, '#c4c4be'); R(0, 8, 16, 1, '#c8c8c2'); R(0, 9, 13, 1, '#fafaf6');
     R(11, 2, 1, 4, '#9aa4b0'); R(11, 10, 1, 8, '#9aa4b0'); P(3, 3, '#d9453b'); P(6, 4, '#3b6fd6'); R(2, 12, 4, 5, '#fff6b0');
   });
 }
@@ -1179,6 +1179,7 @@ function buildLayers() {
       if (x >= 0) R(x, y, 1, 4, '#a86b38');
     }
     R(0, y + 3, GX * C8, 1, '#b2763f');
+    R(0, y, GX * C8, 1, 'rgba(255,228,180,0.16)');   // bevel: each plank's lit top edge
   }
   if (!CLASSIC) {   // wood grain: short darker streaks and the odd knot inside the planks, a lit top edge on some
     for (let y = 0; y < GY * C8; y += 4) for (let x = 0; x < GX * C8; x += 3) {
@@ -1242,10 +1243,10 @@ function buildLayers() {
   R(-3, 24 * C8, 3, 4 * C8, OUT); R(-2, 24 * C8, 2, 4 * C8, WALL);
   g.clearRect(-3, 25 * C8, 3, 16); R(-3, 25 * C8, 3, 1, OUT); R(-3, 27 * C8 - 1, 3, 1, OUT);   // entrance door gap
   // corridor north wall face with a painting
-  R(-3, 24 * C8 - 11, 51, 11, OUT); R(-2, 24 * C8 - 10, 50, 9, '#f2efe8'); R(-2, 24 * C8 - 2, 50, 1, '#d8d4cc');
+  R(-3, 24 * C8 - 11, 51, 11, OUT); wallFace_(-2, 48, 24 * C8 - 10, 9); R(-2, 24 * C8 - 1, 50, 1, '#7a4e2a');
   R(14, 24 * C8 - 9, 14, 6, OUT); R(15, 24 * C8 - 8, 12, 4, '#d9453b'); R(18, 24 * C8 - 8, 4, 4, '#ec8f2b'); R(23, 24 * C8 - 7, 3, 2, '#2f9a8a');
   // north wall face (windows filled in each frame)
-  R(45, -22, GX * C8 - 42, 22, OUT); R(46, -21, GX * C8 - 46, 20, WALL); R(46, -21, GX * C8 - 46, 2, '#ffffff'); R(46, -3, GX * C8 - 46, 2, '#d8d4cc');
+  R(45, -22, GX * C8 - 42, 22, OUT); wallFace_(46, GX * C8, -21, 20); R(46, -21, GX * C8 - 46, 1, '#ffffff'); R(46, -1, GX * C8 - 46, 1, '#7a4e2a');
   for (const w of WINDOWS) g.clearRect(w.x, w.y, w.w, w.h);
   // office dividers (white walls) meeting the north wall
   for (const x of DIVIDERS) { R(x * C8 + 2, -3, 4, 8 * C8 + 3, OUT); R(x * C8 + 3, -3, 2, 8 * C8 + 3, WALL); }
@@ -1370,9 +1371,16 @@ function drawTableRowRaw_(t, r) {
   R(x, y, 1, 8, s.frame); R(x + w - 1, y, 1, 8, s.frame);
   if (first) { R(x, y, w, 1, s.frame); R(x + 1, y + 1, w - 2, 1, '#ffffff'); }
   if (t.mid) R(x + gl + C8 + 2, y, C8 - 4, 8, shade(s.top, 0.96));   // centre strip stays over the middle cell
+  if (t.clutter && !CLASSIC) {   // exec L-desk arm: a paper stack and a pen cup
+    R(x + 3, y + 2, 7, 5, OUT); R(x + 4, y + 3, 5, 3, '#ffffff'); R(x + 5, y + 4, 3, 1, '#c8ccd2'); R(x + 4, y + 5, 5, 1, '#e2e4ea');
+    R(x + 13, y + 2, 4, 5, OUT); R(x + 14, y + 3, 2, 3, '#3a3f55'); P(x + 14, y + 2, '#d9453b'); P(x + 15, y + 1, '#3b6fd6');
+  }
   if (last) {
-    R(x - 1, y + 8, w + 2, 5, OUT); R(x, y + 8, w, 3, s.front); R(x, y + 8, w, 1, shade(s.front, 1.12));
-    R(x, y + 11, 2, 3, s.legs); R(x + w - 2, y + 11, 2, 3, s.legs); P(x - 1, y + 13, OUT); P(x + w, y + 13, OUT);
+    R(x + 1, y + 7, w - 2, 1, shade(s.top, 0.94));   // top's front edge in shade
+    R(x - 1, y + 8, w + 2, 5, OUT); R(x, y + 8, w, 3, s.front); R(x, y + 8, w, 1, shade(s.front, 1.14)); R(x, y + 10, w, 1, shade(s.front, 0.86));
+    if (w >= 20) for (let px = x + 8; px < x + w - 6; px += 16) { R(px, y + 9, 4, 1, shade(s.front, 0.8)); P(px + 1, y + 9, shade(s.front, 1.25)); }   // drawer pulls
+    R(x, y + 11, 2, 3, s.legs); R(x + w - 2, y + 11, 2, 3, s.legs); R(x + 1, y + 11, 1, 3, shade(s.legs, 0.75)); R(x + w - 1, y + 11, 1, 3, shade(s.legs, 0.75));
+    P(x - 1, y + 13, OUT); P(x + w, y + 13, OUT);
   }
 }
 const screenMode = s => { const o = s.owner; if (!o || !o.present) return 'off'; if (!atDesk(o)) return 'lock'; return o.pose === 'call' ? 'crm' : 'code'; };
@@ -1391,7 +1399,7 @@ function drawSeatKit(s) {
     // [top, body height]: a normal monitor, or the product seat's two shorter ones with a gap between them, clear of the desk edge
     for (const [top, h] of s.extraMon ? [[y - 8, 7], [y + 7, 7]] : [[y - 4, 9]]) {
       const sh = h - 2, n = h === 9 ? 0 : (top > y ? 3 : 0);
-      R(mx - 1, top - 1, 5, h + 2, OUT); R(mx, top, 3, h, '#1e2130');
+      R(mx - 1, top - 1, 5, h + 2, OUT); R(mx, top, 3, h, '#1e2130'); R(mx, top, 3, 1, '#3a3f55');
       R(sx, top + 1, 2, sh, SCREEN[mode]);
       if (mode === 'code') for (let k = 0; k < sh; k++) { const v = s.lines[(k + n) % 7]; if (v) P(sx + (k % 2), top + 1 + k, CODE_C[v]); }
       else if (mode === 'crm') { R(sx, top + 1, 2, 1, '#3b6fd6'); P(sx + (Math.floor(TIME * 2) % 2), top + 3 + (Math.floor(TIME / 1.5 + n) % (sh - 2)), '#22b573'); }
@@ -1403,7 +1411,7 @@ function drawSeatKit(s) {
     if ((s.x * 7 + s.y) % 3 === 0) { const mg = right ? cx + 1 : cx + 5; box(mg, y - 3, 2, 2, ['#d9453b', '#f1e9d6', '#3b6fd6'][s.y % 3]); }
   } else if (s.face === 'up' && s.kind === 'desk') {   // L-desk corner: screen faces us over the person's shoulder
     const x = s.x * C8, y = (s.y - 1) * C8;
-    R(x - 1, y - 5, 10, 9, OUT); R(x, y - 4, 8, 7, '#1e2130');
+    R(x - 1, y - 5, 10, 9, OUT); R(x, y - 4, 8, 7, '#1e2130'); R(x, y - 4, 8, 1, '#3a3f55');
     const sx = x + 1, sy = y - 3;
     R(sx, sy, 6, 5, SCREEN[mode]);
     if (mode === 'code') for (let k = 0; k < 5; k++) { if (s.lines[k]) R(sx + (k % 2), sy + k, 2 + s.lines[k], 1, CODE_C[s.lines[k]]); }
@@ -1436,9 +1444,9 @@ const CHAIR_CAPS = new Map();
 function drawChair(s) {   // chairs come in a few kinds: each is drawn once and cached
   const key = [s.face, s.chair, s.kind, !!s.stool].join('|');
   let cap = CHAIR_CAPS.get(key);
-  if (!cap) { cap = capture_(-2, -6, 13, 15, () => drawChairRaw_(s, 0, 0)); CHAIR_CAPS.set(key, cap); }
+  if (!cap) { cap = capture_(-3, -8, 14, 17, () => drawChairRaw_(s, 0, 0)); CHAIR_CAPS.set(key, cap); }
   const x = s.x * C8 + (s.back || 0), y = s.y * C8;
-  g.save(); g.translate(x, y); blitCap_(cap, -2, -6, 13, 15); g.restore();
+  g.save(); g.translate(x, y); blitCap_(cap, -3, -8, 14, 17); g.restore();
 }
 function drawChairRaw_(s, x, y) {
   const c = s.chair, d = shade(c, 0.78), base = s.kind === 'desk' ? '#3a3f4a' : '#d8d8d2';   // back = pulled out from a widened desk
@@ -1447,13 +1455,18 @@ function drawChairRaw_(s, x, y) {
     R(x + 3, y + 6, 2, 2, '#9aa4b0'); R(x + 1, y + 7, 6, 1, '#9aa4b0');
     return;
   }
+  const hl = shade(c, 1.18), wheel = '#22252c';
   if (s.face === 'right' || s.face === 'left') {
-    const right = s.face === 'right', bx = right ? x : x + 6;
-    R(bx - 1, y - 3, 4, 10, OUT); R(bx, y - 2, 2, 8, c);
-    R(x - 1, y + 3, 10, 4, OUT); R(x, y + 4, 8, 2, c); R(x, y + 5, 8, 1, d);
-    R(x + 3, y + 6, 2, 1, base); R(x + 1, y + 7, 6, 1, base);
-  } else if (s.face === 'down') { box(x, y - 5, 8, 7, c); R(x, y + 1, 8, 1, d); }
-  else { box(x, y + 2, 8, 5, c); R(x, y + 2, 8, 1, shade(c, 1.08)); R(x + 3, y + 7, 2, 1, base); }
+    const right = s.face === 'right', bx = right ? x - 1 : x + 6;
+    R(x - 1, y + 3, 10, 4, OUT); R(x, y + 4, 8, 2, c); R(x, y + 4, 8, 1, hl); R(x, y + 5, 8, 1, d);   // seat
+    R(bx - 1, y - 4, 5, 11, OUT); R(bx, y - 3, 3, 9, c); R(bx, y - 3, 1, 9, hl); R(bx + 2, y - 3, 1, 9, d); R(bx, y + 5, 3, 1, d);   // tall backrest
+    R(x + 3, y + 6, 2, 1, base); R(x + 1, y + 7, 6, 1, base); P(x, y + 7, wheel); P(x + 7, y + 7, wheel);
+  } else if (s.face === 'down') {
+    box(x, y - 6, 8, 8, c); R(x, y - 6, 8, 1, hl); R(x, y - 6, 1, 7, hl); R(x + 7, y - 5, 1, 7, d); R(x, y + 1, 8, 1, d);
+    R(x + 2, y - 4, 4, 1, shade(c, 0.9));   // stitching
+  } else {
+    box(x, y + 2, 8, 5, c); R(x, y + 2, 8, 1, hl); R(x, y + 6, 8, 1, d); R(x + 3, y + 7, 2, 1, base); P(x + 1, y + 7, wheel); P(x + 6, y + 7, wheel);
+  }
 }
 const STATIC_PROPS = ['sidetable', 'credenza', 'bookcase', 'silver', 'storage', 'rack'];
 function drawProp(p) {
@@ -1527,11 +1540,13 @@ function drawPropRaw_(p) {
       R(x + cw / 2, face + 1, 1, bottom - face - 1, '#8c939d');
       R(x + cw / 2 - 3, face + 3, 1, 3, '#6b727c'); R(x + cw / 2 + 3, face + 3, 1, 3, '#6b727c');   // handles
       R(x + 1, bottom - 1, cw - 2, 1, '#8c939d');
+      R(x + 1, face + 2, 1, bottom - face - 4, '#cdd3db'); R(x + cw / 2 + 1, face + 2, 1, bottom - face - 4, '#cdd3db');   // lit door edges
       break;
     }
     case 'storage': {   // black storage cabinet against the wall
       const top = bottom - 18, cw = w * C8;
-      R(x - 1, top - 1, cw + 2, 19, OUT); R(x, top, cw, 17, '#2a2d36'); R(x, top, cw, 1, '#4a4f5c'); R(x, top + 4, cw, 1, '#1e2028');
+      R(x - 1, top - 1, cw + 2, 19, OUT); R(x, top, cw, 17, '#2a2d36'); R(x, top, cw, 4, '#363a45'); R(x, top, cw, 1, '#4a4f5c'); R(x, top + 4, cw, 1, '#1e2028');
+      R(x + 1, top + 6, 1, 10, '#3a3e4a'); R(x + cw / 2 + 1, top + 6, 1, 10, '#3a3e4a');   // lit door edges
       R(x + cw / 2, top + 5, 1, 12, '#1e2028'); R(x + cw / 2 - 2, top + 9, 1, 3, '#9aa4b0'); R(x + cw / 2 + 2, top + 9, 1, 3, '#9aa4b0');
       R(x + 2, top + 1, 5, 2, '#c8b48a'); R(x + 9, top + 1, 4, 2, '#3b6fd6');   // boxes on top
       break;
@@ -1539,11 +1554,13 @@ function drawPropRaw_(p) {
     case 'rack': {   // thin dark grey metal shelf rack between pillars: acts like a low wall
       const x1 = x + w * C8, top = bottom - 14;
       R(x - 1, top - 1, w * C8 + 2, 15, OUT); R(x, top, w * C8, 13, '#4a4f5a');
-      for (const sy of [top + 4, top + 9]) R(x, sy, w * C8, 1, '#6b717e');
+      R(x, top, w * C8, 1, '#5c626e');
+      for (const sy of [top + 4, top + 9]) { R(x, sy, w * C8, 1, '#7a808c'); R(x, sy + 1, w * C8, 1, '#3c414b'); }
       for (let px = x; px < x1; px += 3) {
         const h1 = hash(px, 1), h2 = hash(px, 2);
-        if (h1 < 0.55) R(px, top + 1, 2, 3, ['#3b6fd6', '#d9453b', '#e9c46a', '#f1e9d6', '#2f9a8a', '#c8b48a'][(h1 * 60 | 0) % 6]);
-        if (h2 < 0.5) R(px, top + 6, 2, 3, ['#c8b48a', '#f1e9d6', '#9aa4b0', '#ec8f2b', '#3a3f55'][(h2 * 50 | 0) % 5]);
+        const book = (by, c, tall) => { R(px, by + 3 - tall, 2, tall, c); P(px, by + 3 - tall, shade(c, 1.25)); R(px + 1, by + 3 - tall, 1, tall, shade(c, 0.8)); };
+        if (h1 < 0.55) book(top + 1, ['#3b6fd6', '#d9453b', '#e9c46a', '#f1e9d6', '#2f9a8a', '#c8b48a'][(h1 * 60 | 0) % 6], (h1 * 97 | 0) % 3 ? 3 : 2);
+        if (h2 < 0.5) book(top + 6, ['#c8b48a', '#f1e9d6', '#9aa4b0', '#ec8f2b', '#3a3f55'][(h2 * 50 | 0) % 5], (h2 * 89 | 0) % 3 ? 3 : 2);
       }
       for (let px = x; px <= x1 - 1; px += 24) R(px, top, 1, 13, '#6b717e');
       R(x, bottom - 1, w * C8, 1, '#2f333c');
@@ -1553,12 +1570,22 @@ function drawPropRaw_(p) {
 }
 // solid office wall along row 8 with sliding patio-style glass double doors (they slide open as people come near)
 const doorOpen = GLASS_DOORS.map(() => 0);
+let wallStrip = null;
+function wallFace_(x0, x1, y0, h) {   // painted wall face: soft panel seams + a faint texture, wood baseboard at the foot
+  R(x0, y0, x1 - x0, h, '#f2efe8');
+  R(x0, y0, x1 - x0, 1, '#f8f6f1'); R(x0, y0 + h - 3, x1 - x0, 1, '#e6e2d9');   // soft light at the top, shade above the baseboard
+  for (let xx = x0 + 23; xx < x1; xx += 24) R(xx, y0, 1, h - 2, '#e4e0d7');
+  R(x0, y0 + h - 2, x1 - x0, 2, '#a86b3a'); R(x0, y0 + h - 2, x1 - x0, 1, '#c98d55');
+}
 function drawWall() {
   const y = 8 * C8;
-  const seg = (x0, x1) => {
-    R(x0, y - 8, x1 - x0, 15, OUT);
-    R(x0, y - 7, x1 - x0, 2, '#d8d4cc'); R(x0, y - 5, x1 - x0, 9, '#f2efe8'); R(x0, y + 4, x1 - x0, 2, '#c8c2b6');
-  };
+  if (!wallStrip) wallStrip = capture_(48, y - 8, GX * C8 - 48, 15, () => {
+    R(48, y - 8, GX * C8 - 48, 15, OUT);
+    R(48, y - 7, GX * C8 - 48, 1, '#ffffff'); R(48, y - 6, GX * C8 - 48, 1, '#dcd8d0');   // top of the wall
+    wallFace_(48, GX * C8, y - 5, 9);
+    R(48, y + 4, GX * C8 - 48, 2, '#7a4e2a');                                             // baseboard's shadowed lip
+  });
+  const seg = (x0, x1) => blitCap_(wallStrip, x0, y - 8, x1 - x0, 15);
   let x = 48;
   GLASS_DOORS.forEach(([a, b], i) => {
     const dx = a * C8, dw = (b - a + 1) * C8, half = dw / 2;
@@ -1643,17 +1670,21 @@ function drawRoomba() {
 let lights = [];
 const lc = { c: null, x: null };
 // daylight through the top windows: a soft pool slanting down-right across each office floor
+let winLight = null;
 function drawWindowLight_() {
   const sun = daylight(world.hour) * ({ sun: 1, cloud: 0.45, rain: 0.25, snow: 0.6 }[weather] || 0.5);
   if (sun < 0.05) return;
-  WINDOWS.forEach((wn, i) => {
-    const o = OFFICES[i], xmax = (i < DIVIDERS.length ? DIVIDERS[i] * C8 + 2 : GX * C8);
-    for (let y = 0; y < 44; y++) {
-      const x0 = wn.x + y * 0.35, x1 = Math.min(xmax, x0 + wn.w);
-      g.fillStyle = `rgba(255,236,190,${(0.16 * sun * (1 - y / 44)).toFixed(3)})`;
-      g.fillRect(x0, y, x1 - x0, 1);
-    }
-  });
+  if (!winLight) {   // drawn once at full strength, then faded with globalAlpha
+    winLight = canvas(GX * C8, 48); const x = winLight.getContext('2d');
+    WINDOWS.forEach((wn, i) => {
+      const xmax = i < DIVIDERS.length ? DIVIDERS[i] * C8 + 2 : GX * C8;
+      for (let y = 0; y < 44; y++) {
+        const x0 = wn.x + y * 0.35, x1 = Math.min(xmax, x0 + wn.w);
+        x.fillStyle = `rgba(255,236,190,${(0.16 * (1 - y / 44)).toFixed(3)})`; x.fillRect(x0, y, x1 - x0, 1);
+      }
+    });
+  }
+  g.globalAlpha = sun; g.drawImage(winLight, 0, 0); g.globalAlpha = 1;
 }
 function lighting() {
   const day = daylight(world.hour), occupied = workers.some(w => w.present);
