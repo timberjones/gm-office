@@ -34,8 +34,8 @@
     ?hour=14        freeze the clock (decimal ok)        ?speed=60  run the clock N times faster
     ?tz=America/Chicago   clock time zone (weather city is set in the Apps Script: WEATHER_CITY)
     ?scale=4        force the pixel scale                ?lofi=0    no warm tint / vignette
-    ?fps=30         frame rate (default 60)              ?smooth=0  no Scale2x smoothing (falls back to 2x supersampling)
-    ?hd=0           plain 1x sprites (no HD detail, rims or pre-smoothed edges)
+    ?fps=30         frame rate (default 60)              ?smooth=1  GPU Scale2x smoothing on the final upscale
+    ?hd=0           plain 1x sprites (no HD detail or rims)       ?round=1  rounded (Scale2x) sprite corners
     ?seed=N         seed the randomness                  ?dogs=1    bring the poodles in right away (9:00-16:30)
     ?chat=0         no speech bubbles at all              ?feed=0    don't read the live activity feed
   Keys: N night, D day, C real clock, W cycle weather, B say a one-liner now, F fullscreen
@@ -209,9 +209,15 @@ function blit(c, x, y) {
   const s = c.lo && !(g === sceneCtx && SS >= 2) ? c.lo : c, a = s.art || 1;
   g.drawImage(s, snap(x) - 1, snap(y) - 1, s.width / a, s.height / a);
 }
-// Scale2x / EPX on packed pixels (same rule as the GPU shader)
+// 2x copy of packed pixels: plain doubling (square pixel corners) by default; ?round=1 = Scale2x / EPX,
+// which rounds every corner (TJ: rounded looked overdone)
+const ROUND = params.get('round') === '1';
 function epx2_(a, w, h) {
   const o = new Uint32Array(w * h * 4), W = w * 2;
+  if (!ROUND) {
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const p = a[y * w + x], k = y * 2 * W + x * 2; o[k] = o[k + 1] = o[k + W] = o[k + W + 1] = p; }
+    return o;
+  }
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     const i = y * w + x, p = a[i], A = y > 0 ? a[i - w] : p, D = y < h - 1 ? a[i + w] : p, C = x > 0 ? a[i - 1] : p, B = x < w - 1 ? a[i + 1] : p;
     const k = y * 2 * W + x * 2;
@@ -1812,7 +1818,7 @@ function drawSpeech() {
 // neighbours agree, rounding off stair-stepped diagonals while keeping flat retro colours (less blocky on a TV).
 // Runs as a WebGL shader so the frame never leaves the graphics card; without WebGL it falls back to plain
 // sharp scaling. ?smooth=0 turns it off.
-const SMOOTH = params.get('smooth') !== '0';
+const SMOOTH = params.get('smooth') === '1' || ROUND;   // GPU Scale2x pass: off by default (crisp square pixels)
 const EPX_FRAG = `precision mediump float;
 uniform sampler2D t; uniform vec2 size; varying vec2 uv;
 vec4 at(vec2 p) { return texture2D(t, (clamp(p, vec2(0.0), size - 1.0) + 0.5) / size); }
@@ -1873,11 +1879,10 @@ function resize() {
   scale = params.has('scale') ? parseFloat(params.get('scale')) : fit < 1 ? fit : (Math.floor(fit) / fit >= 0.85 ? Math.floor(fit) : fit);
   VW = Math.ceil(cv.width / scale); VH = Math.ceil(cv.height / scale);
   OX = Math.floor((VW - GX * C8) / 2); OY = Math.floor((VH - GY * C8) / 2) + 10;
-  // Smoothing: render the scene at 2x (Scale2x'd sprites with rims, Scale2x'd static layers; ?hd=0 for 1x)
-  // and let the GPU shader do one more Scale2x pass up to the screen (less blocky on a TV).
-  // Without it (?smooth=0, no WebGL, or a tiny screen): supersample 2x when the scale is an even whole number.
+  // The scene renders at 2x (HD sprites with rims, half-pixel motion; ?hd=0 for 1x) and is scaled up with
+  // square pixels. ?smooth=1 adds a GPU Scale2x pass on the final upscale (rounder corners).
   epxOn = SMOOTH && scale >= 2 && setupEpx_(Math.round(VW * scale), Math.round(VH * scale));
-  SS = epxOn ? ART : params.has('ss') ? Math.max(1, parseInt(params.get('ss')) || 1) : (Number.isInteger(scale) && scale >= 4 && scale % 2 === 0 ? 2 : 1);
+  SS = epxOn ? ART : params.has('ss') ? Math.max(1, parseInt(params.get('ss')) || 1) : (scale >= 3.5 || scale === 2 ? ART : 1);   // 2x scene when each scene pixel is >= ~2 screen pixels (or exactly 1)
   view = canvas(VW * SS, VH * SS); vctx = view.getContext('2d'); sceneCtx = vctx;
   lc.c = canvas(VW * SS, VH * SS); lc.x = lc.c.getContext('2d');
   exteriorDirty = true;
