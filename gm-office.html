@@ -175,6 +175,34 @@ function box(x, y, w, h, c) { R(x - 1, y - 1, w + 2, h + 2, OUT); R(x, y, w, h, 
 // shadow on the bottom-right. The 2x copy is used when the scene renders at 2x (SS 2), the 1x one otherwise.
 const ART = params.get('hd') === '0' ? 1 : 2;
 const RIM_LIGHT = 0.30, RIM_DARK = 0.34, EDGE = 1;   // EDGE = outline marker in packed-pixel arrays
+// ?style=classic = the original look (one navy outline everywhere, no drop shadows / grain / window light)
+const CLASSIC = params.get('style') === 'classic';
+// Tinted outlines (32-bit style): each outline pixel is a dark version of the colour it borders, blended with
+// the navy. Tinted outline pixels carry alpha 254 so later steps still know they're outline.
+const isEdge_ = v => v === EDGE || v >>> 24 === 254;
+function tintEdges_(px, w, h) {
+  if (CLASSIC) return;
+  const [nr, ng, nb] = hex(OUT);
+  for (let pass = 0; pass < 2; pass++) {   // pass 2 reaches the outer pixel of a 2px outline
+    const src = px.slice();
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (src[i] !== EDGE) continue;
+      let v = 0;
+      for (const [dx, dy] of [[0, 1], [1, 0], [0, -1], [-1, 0], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+        const xx = x + dx, yy = y + dy;
+        if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+        const n = src[yy * w + xx];
+        if (n > EDGE && (pass === 0 ? n >>> 24 !== 254 : true)) { v = n; break; }
+      }
+      if (!v) continue;
+      if (v >>> 24 === 254) { px[i] = v; continue; }
+      const r = v & 255, gg = v >>> 8 & 255, b = v >>> 16 & 255;
+      const o = [r * 0.3 * 0.5 + nr * 0.5, gg * 0.3 * 0.5 + ng * 0.5, b * 0.3 * 0.5 + nb * 0.5].map(Math.round);
+      px[i] = (254 << 24 | o[2] << 16 | o[1] << 8 | o[0]) >>> 0;
+    }
+  }
+}
 const PK_CACHE = new Map();
 const pk = c => { let v = PK_CACHE.get(c); if (v === undefined) { const [r, gg, b] = hex(c); v = (255 << 24 | b << 16 | gg << 8 | r) >>> 0; PK_CACHE.set(c, v); } return v; };
 function blit(c, x, y) {
@@ -196,9 +224,9 @@ function epx2_(a, w, h) {
 }
 function pxCanvas_(px, w, h, art) {
   const img = new ImageData(w, h), u = new Uint32Array(img.data.buffer), out = pk(OUT);
-  for (let i = 0; i < px.length; i++) u[i] = px[i] === EDGE ? out : px[i];
+  for (let i = 0; i < px.length; i++) u[i] = px[i] === EDGE ? out : px[i] >>> 24 === 254 ? (px[i] | 0xff000000) >>> 0 : px[i];
   if (art > 1) {   // rims, on the body only (not the outline)
-    const d = img.data, body = (x, y) => x >= 0 && y >= 0 && x < w && y < h && px[y * w + x] > EDGE;
+    const d = img.data, body = (x, y) => { if (x < 0 || y < 0 || x >= w || y >= h) return false; const v = px[y * w + x]; return v > EDGE && v >>> 24 !== 254; };
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
       if (!body(x, y)) continue;
       const k = (y * w + x) * 4;
@@ -220,7 +248,7 @@ function addEdge_(px, w, h) {   // empty pixels touching a filled one (4-neighbo
   }
 }
 function spriteOf_(px, w, h) {
-  addEdge_(px, w, h);
+  addEdge_(px, w, h); tintEdges_(px, w, h);
   const lo = pxCanvas_(px, w, h, 1);
   if (ART < 2) return lo;
   const hi = pxCanvas_(epx2_(px, w, h), w * 2, h * 2, 2);
@@ -244,6 +272,7 @@ function capture_(x0, y0, w, h, fn) {
   if (ART < 2) return { c, x0, y0 };
   const px = new Uint32Array(c.getContext('2d').getImageData(0, 0, w, h).data.buffer), out = pk(OUT);
   for (let i = 0; i < px.length; i++) px[i] = px[i] >>> 24 === 0 ? 0 : px[i] === out ? EDGE : px[i];
+  tintEdges_(px, w, h);
   const hi = pxCanvas_(epx2_(px, w, h), w * 2, h * 2, 2);
   hi.lo = c;
   return { c: hi, x0, y0 };
@@ -327,6 +356,7 @@ function bakeHD(rows, pal, flip, view) {
     const v = X[y * W2 + (flip ? W2 - 1 - x : x)];
     px[y * W2 + x] = v === EDGE ? EDGE : v ? pk(pal[String.fromCharCode(v)]) : 0;
   }
+  tintEdges_(px, W2, H2);
   const hi = pxCanvas_(px, W2, H2, 2);
   hi.lo = bakeRows(rows, pal, flip).lo || null;
   return hi;
@@ -983,6 +1013,7 @@ function drawDog(d) {
   const X = snap(d.px), Y = snap(d.py), F = d.frames, f = d.pose === 'walk' && Math.floor(d.walkT * 10) % 2 ? 'B' : 'A';
   let sx = X - 1, sy = Y + 1;
   if (d.dir !== 'left' && d.dir !== 'right') { sx = X; sy = Y; }
+  if (!CLASSIC) groundShadow_(X + 4, Y + 7, 4);
   blit(F[d.dir + f], sx, sy);
   d.headX = sx + 5; d.headTop = sy + 2;
 }
@@ -1149,6 +1180,13 @@ function buildLayers() {
     }
     R(0, y + 3, GX * C8, 1, '#b2763f');
   }
+  if (!CLASSIC) {   // wood grain: short darker streaks and the odd knot inside the planks, a lit top edge on some
+    for (let y = 0; y < GY * C8; y += 4) for (let x = 0; x < GX * C8; x += 3) {
+      const hh = hash(x * 3 + 7, y * 5 + 1);
+      if (hh < 0.07) R(x, y + 1 + (hh * 40 | 0) % 2, 2 + (hh * 80 | 0) % 3, 1, 'rgba(130,70,30,0.18)');
+      else if (hh > 0.993) P(x, y + 1, 'rgba(100,52,20,0.4)');
+    }
+  }
   g.clearRect(0, 0, 48, 24 * C8);   // above the corridor is outside
   // rug under the lunch table
   const r = LUNCH_RUG;
@@ -1158,9 +1196,23 @@ function buildLayers() {
   R(DOCK.x * C8, DOCK.y * C8 + 4, 8, 3, '#9aa4b0');
   // soft shadows under furniture
   const sh = 'rgba(40,20,10,0.18)';
-  for (const t of TABLES) { const gl = t.grow ? t.grow[0] : 0, gr = t.grow ? t.grow[1] : 0; R(t.x0 * C8 - gl, (t.y1 + 1) * C8 + 4, (t.x1 - t.x0 + 1) * C8 + gl + gr, 2, sh); }
-  for (const [, x, y, w, h] of PROPS) R(x * C8, (y + h) * C8, w * C8, 2, sh);
-  R(48, 0, GX * C8 - 48, 2, sh);
+  if (CLASSIC) {
+    for (const t of TABLES) { const gl = t.grow ? t.grow[0] : 0, gr = t.grow ? t.grow[1] : 0; R(t.x0 * C8 - gl, (t.y1 + 1) * C8 + 4, (t.x1 - t.x0 + 1) * C8 + gl + gr, 2, sh); }
+    for (const [, x, y, w, h] of PROPS) R(x * C8, (y + h) * C8, w * C8, 2, sh);
+    R(48, 0, GX * C8 - 48, 2, sh);
+  } else {
+    // drop shadows cast down-right (light from the top-left windows), soft edge + darker core
+    const drop = (x, y, w, h, d = 3) => { R(x + d, y + d, w, h, 'rgba(40,20,8,0.12)'); R(x + d - 1, y + d - 1, w, h, 'rgba(40,20,8,0.12)'); };
+    for (const t of TABLES) { const gl = t.grow ? t.grow[0] : 0, gr = t.grow ? t.grow[1] : 0; drop(t.x0 * C8 - gl, t.y0 * C8, (t.x1 - t.x0 + 1) * C8 + gl + gr, (t.y1 - t.y0 + 1) * C8 + 13); }
+    for (const [k, x, y, w, h] of PROPS) { const top = k === 'bookcase' ? (y + h) * C8 - 5 : k === 'rack' ? (y + h) * C8 - 14 : y * C8; drop(x * C8, top, w * C8, (y + h) * C8 - top, k === 'post' ? 4 : 3); }
+    // ambient occlusion: the floor darkens a little along the walls
+    for (let k = 0; k < 4; k++) {
+      const a = `rgba(40,20,8,${0.10 - k * 0.022})`;
+      R(48, k, GX * C8 - 48, 1, a); R(48 + k, 0, 1, 24 * C8, a); R(GX * C8 - 1 - k, 0, 1, GY * C8, a); R(0, GY * C8 - 1 - k, GX * C8, 1, a);
+      R(48, 8 * C8 + 7 + k, GX * C8 - 48, 1, a);   // under the office wall
+      for (const x of DIVIDERS) { R(x * C8 + 6 + k, 0, 1, 8 * C8 + 2, a); R(x * C8 + 1 - k, 0, 1, 8 * C8 + 2, a); }
+    }
+  }
   // closet (roofed) on the left, then one large washroom (open view)
   const bx = BLOCK.x0 * C8, by = BLOCK.y0 * C8, bw = (BLOCK.x1 - BLOCK.x0 + 1) * C8, bh = (BLOCK.y1 - BLOCK.y0 + 1) * C8, cw = (BLOCK.wall - BLOCK.x0) * C8;
   R(bx, by, bw, bh, OUT); R(bx + 1, by + 1, bw - 2, bh - 2, '#e2cfae');
@@ -1547,10 +1599,15 @@ function drawPerson(w) {
     if ((w.dir === 'left' || w.dir === 'right') && k === 'B') k = 'A';
     c = F[w.dir + k]; sy = Y - 8; view = w.dir;
   }
+  if (!CLASSIC && !w.seated) groundShadow_(X + 4, Y + 8, 5);
   blit(c, sx, sy);
   w.headX = sx + 6; w.headTop = sy + 1;
   if (w.headset) drawHeadset(sx, sy + 1, view);
   if (w.bag && !w.seated) { const bx = sx + (w.dir === 'left' ? -1 : 9), by = sy + 10; R(bx - 1, by - 1, 6, 7, OUT); R(bx, by, 4, 5, '#c8a070'); R(bx, by, 4, 1, '#a8804a'); P(bx + 1, by + 2, '#d9453b'); }   // paper food bag
+}
+function groundShadow_(cx, cy, rx) {   // soft oval shadow at the feet (light comes from the top-left)
+  g.fillStyle = 'rgba(40,20,8,0.22)';
+  g.beginPath(); g.ellipse(cx + 1, cy, rx, rx * 0.4, 0, 0, Math.PI * 2); g.fill();
 }
 function drawHeadset(sx, ht, view) {
   const B = '#2a2238', M = '#55608a';
@@ -1585,6 +1642,19 @@ function drawRoomba() {
 // ---------------------------------------------------------------- lighting
 let lights = [];
 const lc = { c: null, x: null };
+// daylight through the top windows: a soft pool slanting down-right across each office floor
+function drawWindowLight_() {
+  const sun = daylight(world.hour) * ({ sun: 1, cloud: 0.45, rain: 0.25, snow: 0.6 }[weather] || 0.5);
+  if (sun < 0.05) return;
+  WINDOWS.forEach((wn, i) => {
+    const o = OFFICES[i], xmax = (i < DIVIDERS.length ? DIVIDERS[i] * C8 + 2 : GX * C8);
+    for (let y = 0; y < 44; y++) {
+      const x0 = wn.x + y * 0.35, x1 = Math.min(xmax, x0 + wn.w);
+      g.fillStyle = `rgba(255,236,190,${(0.16 * sun * (1 - y / 44)).toFixed(3)})`;
+      g.fillRect(x0, y, x1 - x0, 1);
+    }
+  });
+}
 function lighting() {
   const day = daylight(world.hour), occupied = workers.some(w => w.present);
   const gloom = weather === 'sun' ? 0 : weather === 'cloud' ? 0.08 : 0.14;
@@ -1815,6 +1885,7 @@ function render() {
   g.drawImage(hiL && bg2 || bg, -BGX, -BGY, bg.width, bg.height);
   drawWindows();
   g.drawImage(hiL && wallFG2 || wallFG, -BGX, -BGY, bg.width, bg.height);
+  if (!CLASSIC) drawWindowLight_();
   drawClockHands();
   for (const d of ROOM_DOORS) { const busy = d.kind === 'wc' && SPOTS.wc.spots.some(s => s.door === d.x && s.using && s.using.hidden); P(d.x * C8 + 6, 21 * C8 + 4, busy ? '#d9453b' : '#22b573'); }
   const list = STATIC.slice();
