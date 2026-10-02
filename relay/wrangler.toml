@@ -1,0 +1,15 @@
+# GM Office relay: passes "walk my character" messages from a ?user= page to the office TV in real time.
+# Its own Worker with its own Durable Object; nothing here is shared with other Cloudflare projects.
+# Deploy from this folder: npx wrangler@4 deploy
+name = "gm-office-relay"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+workers_dev = true          # served at gm-office-relay.<subdomain>.workers.dev only; no custom domain or routes
+
+[[durable_objects.bindings]]
+name = "OFFICE"
+class_name = "Office"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Office"]   # SQLite-backed: the kind the free plan allows

@@ -22,7 +22,7 @@
   at the big table. The white and brown toy poodles drop in now and then.
 
   Responsive: the scene integer-scales to whatever screen it is on; neighbouring units (greyed out), the hallway
-  and the cement alley above fill the rest. Self-contained single file; the only network call is the weather.
+  and the cement alley above fill the rest. Self-contained single file; it talks to the activity feed (Apps Script) and the relay (manual control).
   Clock and daylight follow Eastern time (America/Toronto) no matter where the screen is.
   The top windows and the alley show the live weather: sun, cloud, rain or snow.
 
@@ -39,6 +39,11 @@
     ?seed=N         seed the randomness                  ?dogs=1    bring the poodles in right away (9:00-16:30)
     ?chat=0         no speech bubbles at all              ?feed=0    don't read the live activity feed
   Keys: N night, D day, C real clock, W cycle weather, B say a one-liner now, F fullscreen
+
+  Drive your own character: ?user=1234 (or ?user_1234). Arrows / WASD walk, Space / Enter sits on the seat next to
+  you or stands up. Your steps go live to the office TV (and every other open page) through the GM Office relay,
+  a Cloudflare Worker in relay/. Close the tab, or leave it in the background for a minute, and your character goes
+  back to its routine. Ids not in KNOWN are ignored. ?relay=0 = don't connect (drive on this screen only).
 */
 
 // ---------------------------------------------------------------- config
@@ -637,7 +642,8 @@ function bfs(sx, sy, tx, ty) {
 // ---------------------------------------------------------------- coroutines
 let DT = 1 / FPS, TIME = 0;
 class Co {
-  constructor(fn) { this.it = fn(); this.wait = 0; this.until = null; this.done = false; }
+  constructor(fn, w) { this.w = w || null; this.restart(fn); }
+  restart(fn) { this.it = fn(); this.wait = 0; this.until = null; this.done = false; }
   tick() {
     if (this.done) return;
     if (this.wait > 0) { this.wait -= DT; if (this.wait > 0) return; }
@@ -781,7 +787,7 @@ function pickRoster() {
     w.lunchDone = false;
   });
   workers.forEach(w => {   // shared seats: whose turn it is today
-    if (w.variants.length < 2) return;
+    if (w.variants.length < 2 || w.ctl) return;
     w.v = w.variants[Math.floor(r() * w.variants.length)];
     w.look = w.v.look; w.frames = w.v.frames;
   });
@@ -889,7 +895,7 @@ function visitCell(seat) {
   return null;
 }
 function* doChat(w) {
-  const cands = workers.filter(o => o !== w && o.present && atDesk(o) && o.pose === 'type' && !o.held && !o.summon && o.talk > 0);   // interns don't chat
+  const cands = workers.filter(o => o !== w && o.present && atDesk(o) && o.pose === 'type' && !o.held && !o.summon && !o.ctl && o.talk > 0);   // interns don't chat
   if (!cands.length) { yield* sitFor(w, rnd(8, 15)); return; }
   const near = cands.filter(o => Math.abs(o.home.x - w.home.x) + Math.abs(o.home.y - w.home.y) < 14);  // mostly their neighbours
   const o = pick(near.length && chance(0.75) ? near : cands), cell = visitCell(o.home);
@@ -897,10 +903,10 @@ function* doChat(w) {
   standUp(w); yield 0.3;
   const ok = yield* walkTo(w, cell[0], cell[1]);
   if (ok && o.present && atDesk(o) && o.pose === 'type' && !o.summon) {
-    o.held = true; o.pose = 'idle';
+    o.held = true; o.pose = 'idle'; w.chatWith = o;
     w.dir = o.home.x > cell[0] ? 'right' : o.home.x < cell[0] ? 'left' : o.home.y < cell[1] ? 'up' : 'down';
     for (let k = irnd(3, 6); k > 0; k--) { say(k % 2 ? o : w, weighted(CHAT_ICONS), 1.6); yield rnd(1.8, 2.6); }
-    o.held = false; if (atDesk(o)) o.pose = 'type';
+    o.held = false; w.chatWith = null; if (atDesk(o)) o.pose = 'type';
   }
   yield* goHome(w);
 }
@@ -933,7 +939,7 @@ function* lunchAtTable(w) {
   const free = open();
   if (!free.length) { w.lunchMode = 'out'; return; }   // filled up while they were at the microwave
   const seat = pick(free);
-  seat.claimed = true;
+  seat.claimed = w;
   const ok = yield* walkTo(w, seat.x, seat.y);
   seat.claimed = false;
   if (ok) {
@@ -948,7 +954,7 @@ function* lunchAtTable(w) {
 let meeting = null;
 function* startMeeting(w) {
   if (meeting) { yield* sitFor(w, 8); return; }
-  const cands = shuffle(workers.filter(o => o !== w && o.present && atDesk(o) && o.pose === 'type' && !o.held && !o.summon && o.acts !== DESKBOUND && o.role !== 'hr'));   // execs and HR aren't pulled into meetings
+  const cands = shuffle(workers.filter(o => o !== w && o.present && atDesk(o) && o.pose === 'type' && !o.held && !o.summon && !o.ctl && o.acts !== DESKBOUND && o.role !== 'hr'));   // execs and HR aren't pulled into meetings
   if (!cands.length) { yield* sitFor(w, 8); return; }
   const members = [w, ...cands.slice(0, irnd(1, Math.min(MEET_SEATS.length - 1, 5, cands.length)))];
   meeting = { members, end: TIME + 30 + rnd(50, 110), talkT: 0 };
@@ -1080,7 +1086,7 @@ function* courierVisit() {
 }
 // Someone at their desk (not execs, HR or interns) gets up to collect it; closest to the door first.
 function sendForDelivery_() {
-  const ok = workers.filter(w => w.present && atDesk(w) && w.talk > 0 && w.acts !== DESKBOUND && w.role !== 'hr' && !w.held && !w.summon && !w.fetch);
+  const ok = workers.filter(w => w.present && atDesk(w) && w.talk > 0 && w.acts !== DESKBOUND && w.role !== 'hr' && !w.held && !w.summon && !w.fetch && !w.ctl);
   if (!ok.length) return false;
   ok.sort((a, b) => (Math.abs(a.tx - courier.tx) + Math.abs(a.ty - courier.ty)) - (Math.abs(b.tx - courier.tx) + Math.abs(b.ty - courier.ty)));
   pick(ok.slice(0, 3)).fetch = courier;
@@ -2005,6 +2011,7 @@ function render() {
     mctx.globalCompositeOperation = 'source-over'; mctx.fillStyle = vig; mctx.fillRect(0, 0, cv.width, cv.height);
   }
   drawSpeech();
+  drawControlHud_();
 }
 function updateAmbient(dt) {
   for (const c of clouds) { c.x += c.v * dt; if (c.x > GX * C8 + 4) { c.x = 30 - c.w - rnd(0, 30); c.y = rnd(-17, -11); } }
@@ -2029,7 +2036,8 @@ function updateAmbient(dt) {
 function step(dt) {
   DT = dt; TIME += dt;
   world.hour = hourNow();
-  for (const c of cos) c.tick();
+  for (const c of cos) if (!(c.w && c.w.ctl)) c.tick();
+  for (const w of workers) if (w.ctl) drive_(w, dt);
   for (const w of workers) if (w.bubble && (w.bubble.t -= dt) <= 0) w.bubble = null;
   for (const d of dogs) {
     if (d.bubble && (d.bubble.t -= dt) <= 0) d.bubble = null;
@@ -2038,17 +2046,210 @@ function step(dt) {
   updateSpeech(dt);
 }
 
+// ---------------------------------------------------------------- manual control (?user=1234)
+// Open the page with your user id and you drive your own character with the keyboard. Every step goes through
+// the GM Office relay (a Cloudflare Worker, relay/ in this repo) to every other open page, the office TV
+// included, so your character walks there too. Close the tab (or leave it in the background for a minute) and
+// your character goes back to its normal routine. Only ids in KNOWN work; any other id is just the normal page.
+const RELAY_URL = params.get('relay') === '0' ? null : (params.get('relay') || 'wss://gm-office-relay.tj-c25.workers.dev/ws');
+const MANUAL_WALK = 48;   // px per second when driven: a bit brisker than the idle stroll
+const DIRV = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
+const walkable_ = (x, y) => x >= 0 && y >= 0 && x < GX && y < GY && !blocked[idx(x, y)] && !isSeat[idx(x, y)];
+function workerOf_(uid) {   // [worker, variant] for a user id, or null
+  for (const w of workers) { const v = w.variants.find(v => v.uid && String(v.uid) === String(uid)); if (v) return [w, v]; }
+  return null;
+}
+const USER_ID = (params.get('user') || ([...params.keys()].find(k => /^user_\d+$/.test(k)) || '').slice(5)).trim();   // ?user=1234 or ?user_1234
+const MY = (() => { const hit = USER_ID && workerOf_(USER_ID); return hit ? { uid: String(hit[1].uid), w: hit[0], v: hit[1] } : null; })();
+const seatAt_ = (x, y) => SEATS.find(s => s.x === x && s.y === y);
+// Stop whatever they were doing and hand them to the keyboard (local) or the relay (someone else's page).
+function takeOver_(w, v, local) {
+  if (w.ctl) return w.ctl;
+  if (v && w.v !== v) { w.v = v; w.look = v.look; w.frames = v.frames; }   // shared seat: it's their turn now
+  for (const k in SPOTS) for (const s of SPOTS[k].spots) { if (s.busy === w) s.busy = null; if (s.using === w) s.using = null; }
+  LUNCH_SEATS.forEach(s => { if (s.claimed === w) s.claimed = false; });
+  if (w.chatWith) { const o = w.chatWith; o.held = false; if (atDesk(o)) o.pose = 'type'; w.chatWith = null; }
+  if (meeting && meeting.members.includes(w)) { meeting.members = meeting.members.filter(m => m !== w); if (!meeting.members.some(m => m.summon)) meeting = null; }
+  Object.assign(w, { summon: null, meetSeat: null, held: false, fetch: null, bag: false, hidden: false, headset: false, bubble: null });
+  if (!w.present || w.tx < 0) {   // not in today, or out in the hallway
+    w.seated = false; w.sitAt = null;
+    if (local && !w.home.occ) { w.present = true; sit(w, w.home); }   // your page: you start at your desk
+    else Object.assign(w, { present: true, px: 0, py: 25 * C8, tx: 0, ty: 25, pose: 'stand', dir: 'right' });   // the TV: you walk in the door
+  }
+  if (w.seated) w.pose = w.sitAt.kind === 'desk' ? 'type' : 'idle';
+  else w.pose = 'stand';
+  w.ctl = { q: [], dir: w.dir, local: !!local, seen: Date.now() };
+  return w.ctl;
+}
+// Back to the routine: walk home and carry on (or head out, if it's not their day / hours).
+function release_(w) {
+  if (!w.ctl) return;
+  w.ctl = null;
+  if (w.seated && w.sitAt !== w.home) standUp(w);
+  w.co.restart(() => (function* () { if (wantPresent(w) && !atDesk(w)) { standUp(w); yield* goHome(w); } yield* life(w); })());
+}
+// One frame of a driven character: walk the queued cells in order (faster when behind), then stand, or sit on a seat.
+function drive_(w, dt) {
+  const c = w.ctl;
+  if (c.local && !c.q.length && heldDir_()) queueStep_(w, heldDir_());
+  if (!c.q.length) { if (!w.seated) { w.pose = 'stand'; w.dir = c.dir; } return; }
+  const [nx, ny, seat] = c.q[0];
+  if (w.seated) standUp(w);
+  const gx = nx * C8, gy = ny * C8, dx = gx - w.px, dy = gy - w.py, st = MANUAL_WALK * (c.q.length > 3 ? 2 : 1) * dt;
+  w.pose = 'walk'; w.walkT += dt;
+  if (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) w.dir = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+  if (Math.abs(dx) + Math.abs(dy) <= st) {
+    w.px = gx; w.py = gy; w.tx = nx; w.ty = ny; c.q.shift();
+    if (seat && !c.q.length) {
+      if (!seat.occ) sit(w, seat);
+      else { w.pose = 'stand'; c.dir = seat.face; }
+    }
+  } else {
+    w.px += Math.sign(dx) * Math.min(st, Math.abs(dx));
+    w.py += Math.sign(dy) * Math.min(st, Math.abs(dy));
+  }
+}
+
+// ---- your keyboard: arrows / WASD walk (hold to keep walking), Space or Enter sits on the seat next to you or stands up
+const KEY_DIR = { arrowup: 'up', w: 'up', arrowdown: 'down', s: 'down', arrowleft: 'left', a: 'left', arrowright: 'right', d: 'right' };
+let held_ = [];   // direction keys being held, last pressed last
+const heldDir_ = () => held_[held_.length - 1] || null;
+function queueStep_(w, dir) {
+  const c = w.ctl;
+  if (c.q.length >= 2) return;   // taps can queue one step ahead, no more
+  const [ax, ay] = c.q.length ? c.q[c.q.length - 1] : [w.tx, w.ty], [ddx, ddy] = DIRV[dir], nx = ax + ddx, ny = ay + ddy;
+  if (walkable_(nx, ny)) { c.dir = dir; c.q.push([nx, ny]); relaySend_({ t: 'step', x: nx, y: ny, dir, sit: false }); }
+  else if (c.dir !== dir || w.seated) {   // bumped into something: just turn to face it (and get up, if sitting)
+    c.dir = dir;
+    if (!c.q.length) { if (w.seated) standUp(w); w.dir = dir; relaySend_({ t: 'step', x: w.tx, y: w.ty, dir, sit: false }); }
+  }
+}
+function sitOrStand_(w) {
+  const c = w.ctl;
+  if (c.q.length) return;
+  if (w.seated) { standUp(w); relaySend_({ t: 'step', x: w.tx, y: w.ty, dir: c.dir, sit: false }); return; }
+  // a free seat next to you, the one you're facing first; not someone else's desk while they're in
+  const order = [c.dir, ...Object.keys(DIRV).filter(d => d !== c.dir)];
+  for (const d of order) {
+    const s = seatAt_(w.tx + DIRV[d][0], w.ty + DIRV[d][1]);
+    if (!s || s.occ || (s.owner && s.owner !== w && s.owner.present)) continue;
+    c.q.push([s.x, s.y, s]); relaySend_({ t: 'step', x: s.x, y: s.y, dir: s.face, sit: true });
+    return;
+  }
+}
+if (MY) {
+  addEventListener('keydown', e => {
+    const k = e.key.toLowerCase(), dir = KEY_DIR[k];
+    if (dir || k === ' ' || k === 'enter') e.preventDefault();
+    if (e.repeat || !MY.w.ctl) return;
+    if (dir) { held_ = held_.filter(d => d !== dir).concat(dir); queueStep_(MY.w, dir); }
+    else if (k === ' ' || k === 'enter') sitOrStand_(MY.w);
+  });
+  addEventListener('keyup', e => { const dir = KEY_DIR[e.key.toLowerCase()]; if (dir) held_ = held_.filter(d => d !== dir); });
+  addEventListener('blur', () => { held_ = []; });
+}
+
+// ---- the relay: one WebSocket per page. Your page sends your steps; every page moves everyone else who is driving.
+const relay = { ws: null, ok: false, wait: 1000, stop: false, hideT: 0 };
+function relaySend_(m) { if (MY && relay.ok) try { relay.ws.send(JSON.stringify(m)); } catch (e) {} }
+function sendHello_() { const w = MY.w; relaySend_({ t: 'hello', x: w.tx, y: w.ty, dir: w.ctl ? w.ctl.dir : w.dir, sit: w.seated }); }
+function relayConnect_() {
+  if (!RELAY_URL || typeof WebSocket === 'undefined' || relay.ws || relay.stop) return;
+  let ws;
+  try { ws = new WebSocket(RELAY_URL + (MY ? '?uid=' + MY.uid : '')); } catch (e) { return; }
+  relay.ws = ws;
+  ws.onopen = () => { relay.ok = true; relay.wait = 1000; if (MY) sendHello_(); };
+  ws.onmessage = e => { if (e.data === 'pong') return; let m; try { m = JSON.parse(e.data); } catch (er) { return; } onRelay_(m); };
+  ws.onclose = () => {
+    relay.ok = false; relay.ws = null;
+    if (!relay.stop) { setTimeout(relayConnect_, relay.wait); relay.wait = Math.min(relay.wait * 2, 60000); }   // 1, 2, 4 ... 60 s
+  };
+}
+function onRelay_(m) {
+  if (m.t === 'state') {   // (re)connected: exactly these people are driving right now
+    const on = new Set((m.online || []).map(o => String(o.uid)));
+    for (const w of workers) if (w.ctl && !w.ctl.local && !w.variants.some(v => on.has(String(v.uid)))) release_(w);
+    for (const o of m.online || []) onRelay_(Object.assign({ t: 'hello' }, o));
+    return;
+  }
+  const hit = workerOf_(m.uid);
+  if (!hit || (MY && hit[0] === MY.w)) return;   // unknown id, or our own character (only this page drives it)
+  const [w, v] = hit;
+  if (m.t === 'bye') { release_(w); return; }
+  const c = takeOver_(w, v, false);
+  c.seen = Date.now();
+  if (m.t === 'hb') return;
+  c.dir = m.dir || c.dir;
+  const [ax, ay] = c.q.length ? c.q[c.q.length - 1] : [w.tx, w.ty];
+  const seat = m.sit ? seatAt_(m.x, m.y) : null;
+  if (ax === m.x && ay === m.y) {   // same cell: turned, stood up, or (hello) already sitting there
+    if (!c.q.length) { if (!m.sit && w.seated) standUp(w); else if (seat && !w.seated && !seat.occ) sit(w, seat); w.dir = c.dir; }
+    return;
+  }
+  const path = bfs(ax, ay, m.x, m.y);
+  if (!path || path.length > 30) {   // lost track (or too far): jump there
+    if (w.seated) standUp(w);
+    c.q = []; Object.assign(w, { px: m.x * C8, py: m.y * C8, tx: m.x, ty: m.y, dir: c.dir, pose: 'stand' });
+    if (seat && !seat.occ) sit(w, seat);
+    return;
+  }
+  for (const [x, y] of path) c.q.push([x, y]);
+  if (seat) c.q[c.q.length - 1].push(seat);
+  if (c.q.length > 10) {   // way behind (e.g. this tab was in the background): skip ahead
+    const [jx, jy] = c.q[c.q.length - 4];
+    if (w.seated) standUp(w);
+    c.q = c.q.slice(-3); Object.assign(w, { px: jx * C8, py: jy * C8, tx: jx, ty: jy });
+  }
+}
+// keep-alive: drivers say "still here" (others drop a silent driver after 75 s); viewers ping (answered without waking the relay)
+setInterval(() => {
+  if (relay.ok) try { relay.ws.send(MY ? JSON.stringify({ t: 'hb' }) : 'ping'); } catch (e) {}
+  const now = Date.now();
+  for (const w of workers) if (w.ctl && !w.ctl.local && now - w.ctl.seen > 75000) release_(w);
+}, 20000);
+// your page in the background for a minute = you're away: hang up, so your character goes back to its routine
+document.addEventListener('visibilitychange', () => {
+  if (!MY) return;
+  clearTimeout(relay.hideT);
+  if (document.hidden) relay.hideT = setTimeout(() => { relay.stop = true; if (relay.ws) relay.ws.close(); }, 60000);
+  else if (relay.stop) { relay.stop = false; relayConnect_(); }
+});
+// your page: a marker over your head and a strip with the keys + whether the TV can see you
+function drawControlHud_() {
+  if (!MY) return;
+  const w = MY.w, c = mctx, fs = clamp(Math.round(cv.height / 44), 14, 40);
+  c.save(); c.setTransform(1, 0, 0, 1, 0, 0);
+  if (w.present && !w.hidden) {   // bobbing arrow over your head
+    const hx = (OX + w.headX) * scale, hy = (OY + w.headTop - 3) * scale - Math.abs(Math.sin(TIME * 4)) * fs * 0.35, a = fs * 0.45;
+    c.fillStyle = '#0b1020'; c.beginPath(); c.moveTo(hx - a - 3, hy - a * 1.4 - 3); c.lineTo(hx + a + 3, hy - a * 1.4 - 3); c.lineTo(hx, hy + 3); c.fill();
+    c.fillStyle = '#f5c542'; c.beginPath(); c.moveTo(hx - a, hy - a * 1.4); c.lineTo(hx + a, hy - a * 1.4); c.lineTo(hx, hy); c.fill();
+  }
+  const live = relay.ok, status = !RELAY_URL ? 'Only on this screen' : live ? 'Live on the office TV' : 'Connecting to the office TV…';
+  const text = `You (${MY.uid})   ·   Arrows / WASD to walk   ·   Space to sit / stand   ·   `;
+  c.font = `600 ${fs}px "Segoe UI", system-ui, -apple-system, sans-serif`; c.textBaseline = 'middle';
+  const tw = c.measureText(text).width, sw = c.measureText(status).width, dot = fs * 0.7, pad = fs * 0.7, h = fs * 2;
+  const bw = Math.min(cv.width - 24, tw + dot + fs * 0.4 + sw + pad * 2), bx = (cv.width - bw) / 2, by = cv.height - h - 12;
+  c.globalAlpha = 0.9; c.fillStyle = '#0b1020'; c.fillRect(bx, by, bw, h); c.globalAlpha = 1;
+  c.fillStyle = '#fffdf5'; c.fillText(text, bx + pad, by + h / 2);
+  c.fillStyle = live ? '#22b573' : '#e8a020'; c.beginPath(); c.arc(bx + pad + tw + dot / 2, by + h / 2, dot / 2, 0, Math.PI * 2); c.fill();
+  c.fillStyle = '#fffdf5'; c.fillText(status, bx + pad + tw + dot + fs * 0.4, by + h / 2);
+  c.restore();
+}
+
 // ---------------------------------------------------------------- boot
 buildSprites();
 buildLayers();
 buildDrawables();
 for (const w of workers) if (wantPresent(w)) { w.present = true; sit(w, w.home); w.greeted = rosterKey; }   // already at work when the page opens (and already said good morning)
-const cos = [...workers.map(w => new Co(() => life(w))), new Co(roombaLife), new Co(() => dogLife(dogs[0], dogs[1])), new Co(() => dogLife(dogs[1], dogs[0])), new Co(courierLife)];
+const cos = [...workers.map(w => (w.co = new Co(() => life(w), w))), new Co(roombaLife), new Co(() => dogLife(dogs[0], dogs[1])), new Co(() => dogLife(dogs[1], dogs[0])), new Co(courierLife)];
 if (params.get('dogs') === '1') dogs.forEach(d => { d.follow = true; });   // preview: both poodles come in right away
+if (MY) takeOver_(MY.w, MY.v, true);   // ?user=<id>: your character is yours to drive
+relayConnect_();
 resize();
 addEventListener('resize', resize);
 addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
+  if (MY && k !== 'f') return;   // driving: the keys walk your character (F still goes fullscreen)
   if (k === 'n') forcedHour = 22;
   else if (k === 'd') forcedHour = 10.5;
   else if (k === 'c') forcedHour = null;
