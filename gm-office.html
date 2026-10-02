@@ -49,7 +49,7 @@ const LOFI = params.get('lofi') !== '0';
 const FPS = Math.max(15, Math.min(60, parseInt(params.get('fps')) || 60));   // 60 fps for smooth half-pixel motion (?fps=30 for a weak TV)
 const C8 = 8, GX = 48, GY = 28;          // 8px grid cells; x 0-5 is the entrance corridor, x 6-47 the office
 const WALK = 30;                          // px per second
-const OUT = '#1a1c3a';
+const OUT = params.get('style') === 'classic' ? '#1a1c3a' : '#33251f';   // outline: warm dark brown (cozy style); classic = navy
 
 // seeded randomness
 let seed = params.has('seed') ? (parseInt(params.get('seed')) | 0) : (Math.random() * 1e9) | 0;
@@ -198,7 +198,7 @@ function tintEdges_(px, w, h) {
       if (!v) continue;
       if (v >>> 24 === 254) { px[i] = v; continue; }
       const r = v & 255, gg = v >>> 8 & 255, b = v >>> 16 & 255;
-      const o = [r * 0.3 * 0.5 + nr * 0.5, gg * 0.3 * 0.5 + ng * 0.5, b * 0.3 * 0.5 + nb * 0.5].map(Math.round);
+      const o = [r * 0.42 * 0.55 + nr * 0.45, gg * 0.42 * 0.55 + ng * 0.45, b * 0.42 * 0.55 + nb * 0.45].map(Math.round);   // dark, warm version of the material
       px[i] = (254 << 24 | o[2] << 16 | o[1] << 8 | o[0]) >>> 0;
     }
   }
@@ -469,7 +469,7 @@ function buildMod(rows, m, row, front) {
 }
 function buildFrames(m) {
   const sk = SKINS[m.skin];
-  const pal = { h: m.hair, s: sk[0], S: sk[1], e: '#1a1c3a', t: m.shirt, T: shade(m.shirt, 0.78), p: m.pants, k: '#2a2238', c: m.hat || m.hair };
+  const pal = { h: m.hair, s: sk[0], S: sk[1], e: '#1f1820', t: m.shirt, T: shade(m.shirt, 0.78), p: m.pants, k: '#2a2238', c: m.hat || m.hair };
   const mod = (base, view) => { const r = base.map(s => s.split('')); hairMods(r, view, m); return r.map(a => a.join('')); };
   const legs = (rows, l) => rows.slice(0, 13).concat(l);
   const down = mod(DOWN, 'down'), up = mod(UP, 'up'), right = mod(RIGHT, 'right');
@@ -978,7 +978,7 @@ const DOG_D_A = ['..WWWW..', '.WWWWWW.', 'WWeWWeWW', 'WWWnnWWW', '.WWWWWW.', '.W
 const DOG_D_B = DOG_D_A.map((r, j) => j === 6 ? '..W..W..' : j === 7 ? '..S..S..' : r);
 const backOf = rows => rows.map((r, j) => j === 2 || j === 3 ? 'WWWWWWWW' : r);
 function dogFrames(coat, coatShade) {
-  const pal = { W: coat, S: coatShade, e: '#1a1c3a', n: '#1a1214' }, F = {};
+  const pal = { W: coat, S: coatShade, e: '#1f1820', n: '#1a1214' }, F = {};
   F.rightA = bakeRows(DOG_R_A, pal); F.rightB = bakeRows(DOG_R_B, pal); F.leftA = bakeRows(DOG_R_A, pal, true); F.leftB = bakeRows(DOG_R_B, pal, true);
   F.downA = bakeRows(DOG_D_A, pal); F.downB = bakeRows(DOG_D_B, pal); F.upA = bakeRows(backOf(DOG_D_A), pal); F.upB = bakeRows(backOf(DOG_D_B), pal);
   return F;
@@ -1954,6 +1954,11 @@ function render() {
   // to the screen, then the lo-fi grade
   mctx.imageSmoothingEnabled = false;
   if (epxOn) { drawEpx_(); mctx.drawImage(epx.cv, 0, 0); } else mctx.drawImage(view, 0, 0, VW * scale, VH * scale);
+  if (!CLASSIC) {   // cozy grade: a little less saturation, lifted shadows
+    mctx.globalCompositeOperation = 'saturation'; mctx.fillStyle = 'rgba(128,128,128,0.22)'; mctx.fillRect(0, 0, cv.width, cv.height);
+    mctx.globalCompositeOperation = 'screen'; mctx.fillStyle = 'rgba(60,44,30,0.10)'; mctx.fillRect(0, 0, cv.width, cv.height);
+    mctx.globalCompositeOperation = 'source-over';
+  }
   if (LOFI) {
     mctx.globalCompositeOperation = 'soft-light'; mctx.fillStyle = 'rgba(255,176,110,0.20)'; mctx.fillRect(0, 0, cv.width, cv.height);
     mctx.globalCompositeOperation = 'source-over'; mctx.fillStyle = vig; mctx.fillRect(0, 0, cv.width, cv.height);
