@@ -350,7 +350,7 @@ const TABLES = [
   { x0: 6, x1: 6, y0: 4, y1: 6, s: WHITE_DESK },                     // office 1: second desk on the left wall
   { x0: 22, x1: 22, y0: 5, y1: 6, s: WHITE_DESK },                   // office 2: second desk on the right wall
   { x0: 31, x1: 31, y0: 5, y1: 6, s: WHITE_DESK },                   // office 3: second desk on the right wall
-  { x0: 33, x1: 41, y0: 3, y1: 4, s: WHITE_TABLE },                  // conference table, against the left wall
+  { x0: 33, x1: 41, y0: 3, y1: 5, s: WHITE_TABLE },                  // conference table, against the left wall (3 rows tall)
   { x0: 38, x1: 39, y0: 20, y1: 25, s: WHITE_TABLE },                // lunch table
   { x0: 47, x1: 47, y0: 19, y1: 25, s: BAR_TABLE },                  // long bar table on the right wall (work station)
 ];
@@ -366,7 +366,8 @@ function addSeat(x, y, face, kind, extra) {
 // desk seats; side seats face the bank (monitor in the next cell), 'down' seats sit behind an office desk
 // role decides who sits there and how they behave (see ROLES); code matches the Seats tab in the GM Office Activity sheet
 const deskSeats = ['cfo', 'coo', 'ceo'].map((role, i) => addSeat(OFFICES[i].x1 - 1, 2, 'right', 'desk', { role, code: role }));   // corner of each L-desk, facing the computer on the wall-side desk
-addSeat(7, 5, 'left', 'desk'); addSeat(21, 6, 'right', 'desk');   // offices' second desks: nobody sits there
+deskSeats.push(addSeat(7, 5, 'left', 'desk', { role: 'cfoteam', code: 'cfo-team' }));   // CFO's office second desk: someone from his team (no user id)
+addSeat(21, 6, 'right', 'desk');   // COO's office second desk: nobody sits there
 const CEO_SIDE_DESK = addSeat(30, 6, 'right', 'desk');                // CEO office's second desk: the HR visitor sometimes sits here
 [11, 13, 15, 17].forEach((y, i) => deskSeats.push(addSeat(8, y, 'left', 'desk', { role: 'am', code: 'am-' + (i + 1) })));   // left wall: account managers
 const islandCount = { intern: 0, buyer: 0 };
@@ -388,9 +389,10 @@ for (const s of SEATS) {
   const t = TABLES.find(t => t.grow && mx >= t.x0 && mx <= t.x1 && s.y >= t.y0 && s.y <= t.y1);
   if (t) s.back = (t.grow[s.face === 'right' ? 0 : 1] + 2) * (s.face === 'right' ? -1 : 1);
 }
+// conference room: 3 chairs along the top, 3 along the bottom, 2 on the right end (the table is 3 rows tall)
 const MEET_SEATS = [
-  addSeat(42, 3, 'left', 'meet'), addSeat(35, 2, 'down', 'meet'), addSeat(35, 5, 'up', 'meet'), addSeat(37, 2, 'down', 'meet'), addSeat(37, 5, 'up', 'meet'),
-  addSeat(39, 2, 'down', 'meet'), addSeat(39, 5, 'up', 'meet'), addSeat(34, 2, 'down', 'meet'),
+  addSeat(42, 3, 'left', 'meet'), addSeat(37, 2, 'down', 'meet'), addSeat(37, 6, 'up', 'meet'), addSeat(42, 5, 'left', 'meet'),
+  addSeat(34, 2, 'down', 'meet'), addSeat(34, 6, 'up', 'meet'), addSeat(40, 2, 'down', 'meet'), addSeat(40, 6, 'up', 'meet'),
 ];
 const LUNCH_SEATS = [
   addSeat(37, 21, 'right', 'lunch'), addSeat(40, 21, 'left', 'lunch'), addSeat(37, 23, 'right', 'lunch'), addSeat(40, 23, 'left', 'lunch'),
@@ -515,6 +517,9 @@ const ROLES = {
   intern: { talk: 0, acts: [['type', 72], ['coffee', 6], ['water', 4], ['wc', 3], ['fridge', 2], ['sink', 2]] },
   staff: { talk: 1, acts: ACTS },
   product: { talk: 1, fixed: true, days: ['tue', 'thu'], acts: ACTS, look: { hair: '#1a1a24', skin: 1, shirt: '#22b573', pants: '#2f3a5c', style: 'short' } },
+  // CFO's team member at the second desk in the CFO's office: no user id; all he ever says is his one line
+  cfoteam: { talk: 0, lines: ['nto nto nto...'], acts: [['type', 62], ['call', 18], ['coffee', 6], ['water', 4], ['wc', 3], ['fridge', 2]],
+    look: { hair: '#1a1a24', skin: 2, shirt: '#5b6a95', pants: '#2a2238', style: 'short' } },
   // HR: visits some days, sits at the CEO office's second desk or the dining table's bottom-middle seat, never talks
   hr: { talk: 0, acts: [['type', 80], ['coffee', 5], ['water', 4], ['wc', 3]], in: [9.0, 9.6], out: [15.4, 16.4], lunch: 'desk',
     look: { hair: '#2a1a14', skin: 2, shirt: '#8b5cf6', pants: '#2f3a5c', style: 'long' } },
@@ -1476,13 +1481,17 @@ function speechFor_(uid) {
 }
 // Who speaks: someone in the office with their own lines (it's their turn at a shared seat), or anyone for "all" lines.
 function sayRandom() {
-  if (!feed) return false;
   const here = workers.filter(w => w.present && !w.hidden && w.px >= 0);
   const pools = [];
-  const mine = here.filter(w => w.v.uid).map(w => [w, speechFor_(w.v.uid)]).filter(p => p[1].length);
-  if (mine.length) pools.push([() => { const [w, lines] = pick(mine); return [w, pick(lines)]; }, 3]);
-  const all = speechFor_('all'), talkers = here.filter(w => w.talk > 0 && w.role !== 'product');   // interns + HR never talk; product only says their own lines
-  if (all.length && talkers.length) pools.push([() => [weighted(talkers.map(c => [c, c.talk])), pick(all)], 2]);
+  if (feed) {
+    const mine = here.filter(w => w.v.uid).map(w => [w, speechFor_(w.v.uid)]).filter(p => p[1].length);
+    if (mine.length) pools.push([() => { const [w, lines] = pick(mine); return [w, pick(lines)]; }, 3]);
+    const all = speechFor_('all'), talkers = here.filter(w => w.talk > 0 && w.role !== 'product');   // interns + HR never talk; product only says their own lines
+    if (all.length && talkers.length) pools.push([() => [weighted(talkers.map(c => [c, c.talk])), pick(all)], 2]);
+  }
+  // people with a fixed line of their own (no user id, so not in the feed), e.g. the CFO's team member
+  const fixed = here.filter(w => ROLES[w.role] && ROLES[w.role].lines);
+  if (fixed.length) pools.push([() => { const w = pick(fixed); return [w, pick(ROLES[w.role].lines)]; }, 1]);
   if (!pools.length) return false;
   let w, text;
   for (let k = 0; k < 4; k++) { [w, text] = weighted(pools)(); if (text !== lastText) break; }
