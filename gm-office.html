@@ -1175,23 +1175,37 @@ const CLOCK = { x: 341, y: -11 };
 function buildLayers() {
   bg = canvas(GX * C8 + BGX * 2, GY * C8 + BGY + 12);
   g = bg.getContext('2d', RD); g.translate(BGX, BGY);
-  // hardwood floor, staggered planks
-  const planks = ['#c8894e', '#c2834a', '#cc8f55', '#bf7f45'];
-  for (let y = 0; y < GY * C8; y += 4) {
-    const row = y / 4, x0 = row * 7 % 24;
-    for (let x = -24 + x0; x < GX * C8; x += 24) {
-      const xs = Math.max(0, x), xe = Math.min(GX * C8, x + 24);
-      if (xe > xs) R(xs, y, xe - xs, 4, planks[(row * 3 + Math.floor(x / 24)) & 3]);
-      if (x >= 0) R(x, y, 1, 4, '#a86b38');
+  // hardwood floor
+  if (CLASSIC) {   // staggered planks, flat
+    const planks = ['#c8894e', '#c2834a', '#cc8f55', '#bf7f45'];
+    for (let y = 0; y < GY * C8; y += 4) {
+      const row = y / 4, x0 = row * 7 % 24;
+      for (let x = -24 + x0; x < GX * C8; x += 24) {
+        const xs = Math.max(0, x), xe = Math.min(GX * C8, x + 24);
+        if (xe > xs) R(xs, y, xe - xs, 4, planks[(row * 3 + Math.floor(x / 24)) & 3]);
+        if (x >= 0) R(x, y, 1, 4, '#a86b38');
+      }
+      R(0, y + 3, GX * C8, 1, '#b2763f');
     }
-    R(0, y + 3, GX * C8, 1, '#b2763f');
-    R(0, y, GX * C8, 1, 'rgba(255,228,180,0.16)');   // bevel: each plank's lit top edge
-  }
-  if (!CLASSIC) {   // wood grain: short darker streaks and the odd knot inside the planks, a lit top edge on some
-    for (let y = 0; y < GY * C8; y += 4) for (let x = 0; x < GX * C8; x += 3) {
-      const hh = hash(x * 3 + 7, y * 5 + 1);
-      if (hh < 0.07) R(x, y + 1 + (hh * 40 | 0) % 2, 2 + (hh * 80 | 0) % 3, 1, 'rgba(130,70,30,0.18)');
-      else if (hh > 0.993) P(x, y + 1, 'rgba(100,52,20,0.4)');
+  } else {   // cozy boards: random lengths, each its own tone, lit top edge, soft gap, a few grain streaks / knots
+    const TONES = [['#d7a873', '#c9965f', '#c08d58'], ['#d1a06a', '#c28e58', '#b98551'], ['#dcae79', '#cf9c65', '#c6935e'],
+                   ['#cc9a64', '#bd8853', '#b47f4c'], ['#d4a46e', '#c7935c', '#be8a55']];   // [lit edge, body, grain]
+    const GAP = '#9c6c43', JOINT = '#a87647';
+    for (let y = 0; y < GY * C8; y += 4) {
+      const row = y / 4;
+      let x = -Math.floor(hash(row, 3) * 30);
+      for (let n = 0; x < GX * C8; n++) {
+        const len = 18 + Math.floor(hash(row * 31 + n, 7) * 18), t = TONES[Math.floor(hash(row * 17 + n, 11) * TONES.length)];
+        const xs = Math.max(0, x), xe = Math.min(GX * C8, x + len);
+        if (xe > xs) {
+          R(xs, y, xe - xs, 3, t[1]); R(xs, y, xe - xs, 1, t[0]);
+          for (let k = 0; k < 1; k++) { const gx = x + 3 + Math.floor(hash(row * 13 + n, 20 + k) * (len - 8)), gl = 3 + Math.floor(hash(row + n, 30 + k) * 5); if (gx >= 0) R(gx, y + 1 + k % 2, Math.min(gl, xe - gx), 1, t[2]); }
+          if (hash(row * 7 + n, 40) < 0.08) { const kx = x + 4 + Math.floor(hash(n, row) * (len - 8)); if (kx >= 0 && kx < xe) { P(kx, y + 1, t[2]); P(kx + 1, y + 1, GAP); P(kx + 2, y + 1, t[2]); } }
+        }
+        if (x >= 0) { R(x, y, 1, 3, JOINT); P(x + 1, y, t[0]); }
+        x += len;
+      }
+      R(0, y + 3, GX * C8, 1, GAP);
     }
   }
   g.clearRect(0, 0, 48, 24 * C8);   // above the corridor is outside
@@ -1209,7 +1223,7 @@ function buildLayers() {
     R(48, 0, GX * C8 - 48, 2, sh);
   } else {
     // drop shadows cast down-right (light from the top-left windows), soft edge + darker core
-    const drop = (x, y, w, h, d = 3) => { R(x + d, y + d, w, h, 'rgba(40,20,8,0.12)'); R(x + d - 1, y + d - 1, w, h, 'rgba(40,20,8,0.12)'); };
+    const drop = (x, y, w, h, d = 3) => { R(x + d, y + d, w, h, 'rgba(60,30,10,0.07)'); R(x + d - 1, y + d - 1, w, h, 'rgba(60,30,10,0.07)'); };
     for (const t of TABLES) { const gl = t.grow ? t.grow[0] : 0, gr = t.grow ? t.grow[1] : 0; drop(t.x0 * C8 - gl, t.y0 * C8, (t.x1 - t.x0 + 1) * C8 + gl + gr, (t.y1 - t.y0 + 1) * C8 + 13); }
     for (const [k, x, y, w, h] of PROPS) { const top = k === 'bookcase' ? (y + h) * C8 - 5 : k === 'rack' ? (y + h) * C8 - 14 : y * C8; drop(x * C8, top, w * C8, (y + h) * C8 - top, k === 'post' ? 4 : 3); }
     // ambient occlusion: the floor darkens a little along the walls
