@@ -1793,7 +1793,7 @@ function sayRandom() {
   lastText = text;
   w.bubble = null;
   if (w.role === 'am') text = text.toUpperCase();   // account managers are loud: ALL CAPS
-  speech = { w, text, t: 0, life: 4 + text.length * 0.07 };
+  speech = { w, text, t: 0, life: 5 + text.length * 0.08 };   // long enough to notice and read from a distance
   return true;
 }
 function updateSpeech(dt) {
@@ -1809,7 +1809,7 @@ function wrapText(c, text, maxW) {
 function drawSpeech() {
   const s = speech; if (!s) return;
   const c = mctx, hx = (OX + s.w.headX) * scale, hy = (OY + s.w.headTop - 1) * scale;
-  const fs = clamp(Math.round(scale * 3.2), 14, 26);
+  const fs = clamp(Math.round(cv.height / 44), 16, 52);   // ~24px on a 1080p TV, ~48px on 4K: readable across the room
   c.save(); c.setTransform(1, 0, 0, 1, 0, 0);
   c.font = `600 ${fs}px "Segoe UI", system-ui, -apple-system, sans-serif`; c.textBaseline = 'top';
   const lines = wrapText(c, s.text, fs * 12), lh = Math.round(fs * 1.25), padX = Math.round(fs * 0.7), padY = Math.round(fs * 0.45);
