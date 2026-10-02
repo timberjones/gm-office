@@ -1520,7 +1520,9 @@ function buildDrawables() {
     STATIC.push({ key: (s.extraMon ? ky + 1 : ky) * C8 - 0.1, draw: () => drawSeatKit(s) });   // the second (lower) monitor reaches into the next desk row
     STATIC.push({ key: (s.y + 1) * C8 + (s.face === 'up' ? 0.6 : 0.4), draw: () => drawChair(s) });
   }
-  for (const p of PROPS) STATIC.push({ key: (p[2] + p[4]) * C8 - 0.3, draw: () => drawProp(p) });
+  // tall-but-thin props people stand beside (island, sink counter) sort by their TOP row, so people next to them draw in front
+  const BESIDE = ['island', 'counterV'];
+  for (const p of PROPS) STATIC.push({ key: (BESIDE.includes(p[0]) ? p[2] + 1 : p[2] + p[4]) * C8 - 0.3, draw: () => drawProp(p) });
   STATIC.push({ key: 9 * C8 - 0.2, draw: drawWall });
 }
 function render() {
