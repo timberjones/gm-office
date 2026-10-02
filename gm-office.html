@@ -1,0 +1,1468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GM Office</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0a0e2a; overflow: hidden; cursor: none; }
+  canvas { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; image-rendering: crisp-edges; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+'use strict';
+/*
+  GM Office idle screen (office TV).
+  Top-down pixel art of the real office floor plan (old-school Zelda / Pokemon Blue view): the glass offices
+  along the windows, the five desk banks, the closet + washroom block, the kitchen (sink counter, coffee machine,
+  fridge, island), the lunch table and the entrance corridor off the building hallway. The team types, takes
+  headset calls (sometimes pacing), chats, grabs coffee, holds meetings in the glass meeting room and eats lunch
+  at the big table. The white and brown toy poodles drop in now and then.
+
+  Responsive: the scene integer-scales to whatever screen it is on; neighbouring units (greyed out), the hallway
+  and the cement alley above fill the rest. Self-contained single file; the only network call is the weather.
+  Clock and daylight follow Eastern time (America/Toronto) no matter where the screen is.
+  The top windows and the alley show the live weather: sun, cloud, rain or snow.
+
+  URL params:
+    (headcount follows the weekday in Eastern time: Tue/Thu 80-95% of the 31 desks, Mon/Wed/Fri 10-30%, weekends empty)
+    ?day=tue        preview another weekday              ?people=20  force today's headcount
+    ?weather=rain   force sun | cloud | rain | snow     (default: live OpenWeather for ?city, default Montreal)
+    ?time=14:30     start the clock at that time and let it run (also 2:30pm, 14)
+    ?hour=14        freeze the clock (decimal ok)        ?speed=60  run the clock N times faster
+    ?tz=America/Chicago   clock time zone                ?city=Toronto,ca
+    ?scale=4        force the pixel scale                ?lofi=0    no warm tint / vignette
+    ?seed=N         seed the randomness                  ?dogs=1    bring the poodles in right away (9:00-16:30)
+    ?chat=0         no sales one-liners
+  Keys: N night, D day, C real clock, W cycle weather, B say a one-liner now, F fullscreen
+*/
+
+// ---------------------------------------------------------------- config
+const params = new URLSearchParams(location.search);
+const PEOPLE = params.has('people') ? Math.max(0, parseInt(params.get('people')) || 0) : null;   // override today's headcount
+const TZ = params.get('tz') || 'America/Toronto';
+const CITY = params.get('city') || 'Montreal,ca';
+const WEATHER_KEY = params.get('key') || '';   // OpenWeather key (same as GM yard)
+const LOFI = params.get('lofi') !== '0';
+const FPS = 30;
+const C8 = 8, GX = 48, GY = 28;          // 8px grid cells; x 0-5 is the entrance corridor, x 6-47 the office
+const WALK = 30;                          // px per second
+const OUT = '#1a1c3a';
+
+// seeded randomness
+let seed = params.has('seed') ? (parseInt(params.get('seed')) | 0) : (Math.random() * 1e9) | 0;
+function rand() { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }
+const rnd = (a, b) => a + rand() * (b - a), irnd = (a, b) => Math.floor(rnd(a, b + 1)), pick = a => a[Math.floor(rand() * a.length)], chance = p => rand() < p;
+function weighted(list) { let s = 0; for (const [, w] of list) s += w; let r = rand() * s; for (const [k, w] of list) { r -= w; if (r <= 0) return k; } return list[0][0]; }
+function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+const hash = (x, y) => ((Math.imul(x | 0, 73856093) ^ Math.imul(y | 0, 19349663)) >>> 0) % 1000 / 1000;
+
+// ---------------------------------------------------------------- clock (Eastern time)
+const tzFmt = new Intl.DateTimeFormat('en-US', { timeZone: TZ, hourCycle: 'h23', hour: 'numeric', minute: 'numeric', second: 'numeric', month: 'numeric' });
+function zoneNow() { const o = {}; for (const p of tzFmt.formatToParts(new Date())) o[p.type] = +p.value; return { h: (o.hour % 24) + o.minute / 60 + o.second / 3600, month: o.month }; }
+const dayFmt = new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'short', year: 'numeric', month: 'numeric', day: 'numeric' });
+const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+const DAY_PARAM = WEEKDAYS.includes((params.get('day') || '').toLowerCase().slice(0, 3)) ? params.get('day').toLowerCase().slice(0, 3) : null;
+function zoneDay() {   // weekday + date key in the office's time zone (?day=tue previews another weekday)
+  const o = {}; for (const p of dayFmt.formatToParts(new Date())) o[p.type] = p.value;
+  return { wd: DAY_PARAM || o.weekday.toLowerCase().slice(0, 3), key: `${o.year}-${o.month}-${o.day}${DAY_PARAM ? '-' + DAY_PARAM : ''}` };
+}
+const clockSpeed = parseFloat(params.get('speed') || '1') || 1;
+const paramHour = params.has('hour') ? parseFloat(params.get('hour')) : null;
+// ?time=14:30 (or 2:30pm, or 14) starts the clock at that time and lets it run normally from there
+const paramTime = (() => {
+  const m = (params.get('time') || '').trim().toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
+  if (!m) return null;
+  let h = +m[1] % 24; const min = +(m[2] || 0);
+  if (m[3] === 'pm' && h < 12) h += 12; if (m[3] === 'am' && h === 12) h = 0;
+  return h + min / 60;
+})();
+let forcedHour = clockSpeed === 1 && paramTime == null ? paramHour : null;
+const startHour = paramTime != null ? paramTime : paramHour;
+const bootMs = Date.now(), bootHour = startHour != null ? startHour : zoneNow().h;
+function hourNow() {
+  if (forcedHour != null) return forcedHour;
+  if (clockSpeed !== 1 || paramTime != null) return (bootHour + (Date.now() - bootMs) / 3600000 * clockSpeed) % 24;
+  return zoneNow().h;
+}
+// Montreal / Toronto sunrise and sunset by month (local clock time)
+const SUNRISE = [7.6, 7.2, 6.9, 6.4, 5.6, 5.1, 5.3, 5.9, 6.6, 7.3, 6.9, 7.5];
+const SUNSET = [16.6, 17.3, 18.7, 19.6, 20.3, 20.7, 20.6, 20.0, 19.1, 18.1, 16.5, 16.2];
+let MONTH = zoneNow().month || 1;
+const sunTimes = () => [SUNRISE[MONTH - 1], SUNSET[MONTH - 1]];
+function daylight(h) {
+  const [sr, ss] = sunTimes();
+  if (h < sr - 0.75 || h > ss + 0.75) return 0;
+  if (h < sr + 0.75) return (h - sr + 0.75) / 1.5;
+  if (h > ss - 0.75) return (ss + 0.75 - h) / 1.5;
+  return 1;
+}
+
+// ---------------------------------------------------------------- weather: sun | cloud | rain | snow
+const WEATHERS = ['sun', 'cloud', 'rain', 'snow'];
+let weather = WEATHERS.includes(params.get('weather')) ? params.get('weather') : 'sun';
+const weatherForced = WEATHERS.includes(params.get('weather'));
+const owmToWeather = id => id >= 600 && id < 700 ? 'snow' : id >= 200 && id < 600 ? 'rain' : (id === 800 || id === 801) ? 'sun' : 'cloud';
+async function fetchWeather() {
+  if (weatherForced || !WEATHER_KEY) return;
+  try {
+    const ac = new AbortController(), tm = setTimeout(() => ac.abort(), 8000);
+    const r = await fetch(`https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(CITY)}&appid=${WEATHER_KEY}`, { signal: ac.signal });
+    clearTimeout(tm);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const o = await r.json();
+    const wx = owmToWeather(o.weather && o.weather[0] ? o.weather[0].id : 800);
+    if (wx !== weather) { weather = wx; exteriorDirty = true; }
+  } catch (e) { /* keep the last known weather */ }
+}
+
+// colour helpers
+const hex = c => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
+const rgb = a => '#' + a.map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+const mixC = (a, b, t) => { const A = hex(a), B = hex(b); return rgb(A.map((v, i) => v + (B[i] - v) * Math.max(0, Math.min(1, t)))); };
+const shade = (c, k) => rgb(hex(c).map(v => v * k));
+
+// ---------------------------------------------------------------- drawing primitives
+const canvas = (w, h) => { const c = document.createElement('canvas'); c.width = Math.max(1, w); c.height = Math.max(1, h); return c; };
+let g = null;
+function R(x, y, w, h, c) { g.fillStyle = c; g.fillRect(Math.round(x), Math.round(y), w, h); }
+function P(x, y, c) { g.fillStyle = c; g.fillRect(Math.round(x), Math.round(y), 1, 1); }
+function line(x0, y0, x1, y1, c) {
+  x0 = Math.round(x0); y0 = Math.round(y0); x1 = Math.round(x1); y1 = Math.round(y1);
+  const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  for (let n = 0; n < 400; n++) {
+    P(x0, y0, c);
+    if (x0 === x1 && y0 === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x0 += sx; }
+    if (e2 <= dx) { err += dx; y0 += sy; }
+  }
+}
+function box(x, y, w, h, c) { R(x - 1, y - 1, w + 2, h + 2, OUT); R(x, y, w, h, c); }   // filled rect with outline
+function blit(c, x, y) { g.drawImage(c, Math.round(x) - 1, Math.round(y) - 1); }
+function outline(c) {
+  const x = c.getContext('2d'), W = c.width, H = c.height, id = x.getImageData(0, 0, W, H), d = id.data, a = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) a[i] = d[i * 4 + 3] > 0 ? 1 : 0;
+  const [r, gg, b] = hex(OUT);
+  for (let y = 0; y < H; y++) for (let xx = 0; xx < W; xx++) {
+    const i = y * W + xx;
+    if (a[i]) continue;
+    if ((xx > 0 && a[i - 1]) || (xx < W - 1 && a[i + 1]) || (y > 0 && a[i - W]) || (y < H - 1 && a[i + W])) { d[i * 4] = r; d[i * 4 + 1] = gg; d[i * 4 + 2] = b; d[i * 4 + 3] = 255; }
+  }
+  x.putImageData(id, 0, 0);
+}
+function mk(w, h, fn) { const c = canvas(w + 2, h + 2), save = g; g = c.getContext('2d'); g.translate(1, 1); fn(); g = save; outline(c); return c; }
+function bakeRows(rows, pal, flip) {
+  const h = rows.length, w = rows[0].length, c = canvas(w + 2, h + 2), x = c.getContext('2d');
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const col = pal[rows[j][i]];
+    if (!col) continue;
+    x.fillStyle = col; x.fillRect(1 + (flip ? w - 1 - i : i), 1 + j, 1, 1);
+  }
+  outline(c); return c;
+}
+const FONT = { W: [5, 5, 7, 7, 5], C: [3, 4, 4, 4, 3] };
+function glyphs(s, x, y, c) {
+  g.fillStyle = c;
+  for (let k = 0; k < s.length; k++) { const gl = FONT[s[k]]; if (!gl) continue; for (let j = 0; j < 5; j++) for (let i = 0; i < 3; i++) if (gl[j] & (4 >> i)) g.fillRect(x + k * 4 + i, y + j, 1, 1); }
+}
+
+// 5x5 speech-bubble icons (bit 16 = left column)
+const ICONS = {
+  dots: { r: [0, 0, 21, 0, 0], c: OUT },
+  excl: { r: [4, 4, 4, 0, 4], c: '#d9453b' },
+  question: { r: [14, 17, 6, 0, 4], c: '#3b6fd6' },
+  dollar: { r: [15, 20, 14, 5, 30], c: '#22b573' },
+  check: { r: [1, 2, 20, 8, 0], c: '#22b573' },
+  heart: { r: [10, 31, 31, 14, 4], c: '#e8506a' },
+  note: { r: [6, 5, 4, 12, 12], c: '#8b5cf6' },
+  smile: { r: [10, 10, 0, 17, 14], c: '#ec8f2b' },
+  chart: { r: [1, 3, 7, 15, 31], c: '#22b573' },
+  cup: { r: [10, 0, 30, 29, 28], c: '#8a5530' },
+  bulb: { r: [14, 17, 17, 14, 4], c: '#e8a020' },
+  food: { r: [0, 14, 31, 31, 14], c: '#e8a020' },
+  zzz: { r: [30, 2, 4, 8, 30], c: '#5b6a95' },
+};
+const CALL_ICONS = [['dots', 6], ['dollar', 2], ['check', 2], ['question', 2], ['excl', 1], ['smile', 2], ['chart', 1]];
+const CHAT_ICONS = [['dots', 3], ['smile', 3], ['question', 1], ['excl', 1], ['heart', 1], ['note', 1]];
+const MEET_ICONS = [['chart', 3], ['bulb', 2], ['dots', 3], ['check', 2], ['question', 1]];
+
+// ---------------------------------------------------------------- characters (12 wide; random looks, no names)
+// h hair, s skin, S skin shade, e eye, t shirt, T shirt shade, p pants, k shoes
+const DOWN = [
+  '............', '...hhhhhh...', '..hhhhhhhh..', '.hhhhhhhhhh.', '.hhsshhsshh.', '.hssssssssh.', '.hsessssesh.', '..ssssssss..',
+  '...ssSSss...', '..ttttTttt..', '.tttttttttt.', '.sttTttTtts.', '.s.tttttt.s.', '...pppppp...', '...pp..pp...', '...pp..pp...', '...kk..kk...',
+];
+const UP = [
+  '............', '...hhhhhh...', '..hhhhhhhh..', '.hhhhhhhhhh.', '.hhhhhhhhhh.', '.hhhhhhhhhh.', '.hhhhhhhhhh.', '..hhhhhhhh..',
+  '...ssssss...', '..tttttttt..', '.tttttttttt.', '.sttttttTts.', '.s.tttttt.s.', '...pppppp...', '...pp..pp...', '...pp..pp...', '...kk..kk...',
+];
+const RIGHT = [
+  '............', '...hhhhhh...', '..hhhhhhhh..', '..hhhhhhhhh.', '..hhhhhhsss.', '..hhhhhsssss', '..hhhhsssse.', '...hhssssss.',
+  '....ssSss...', '...tttttt...', '...tttttt...', '...ttstTt...', '...ttsTTt...', '...pppppp...', '....pppp....', '....pppp....', '....kkkkk...',
+];
+const SIDE_SIT_A = [
+  '............', '...hhhhhh...', '..hhhhhhhh..', '..hhhhhhhhh.', '..hhhhhhsss.', '..hhhhhsssss', '..hhhhsssse.', '...hhssssss.',
+  '....ssSss...', '...tttttt...', '...ttttttss.', '...ttttTt...', '...pppppppp.', '...pppppppp.', '.........pp.', '.........kkk',
+];
+const SIDE_SIT_B = SIDE_SIT_A.map((r, j) => j === 10 ? '...tttttts..' : j === 11 ? '...ttttTtss.' : r);
+const LEGS_A = ['...pppppp...', '...pp..pp...', '...kk..pp...', '.......kk...'];
+const LEGS_B = ['...pppppp...', '...pp..pp...', '...pp..kk...', '...kk.......'];
+const LEGS_SIDE = ['...pppppp...', '...pp..pp...', '..pp....pp..', '..kk....kkk.'];
+const SIT_UP_A = [
+  '............', '...hhhhhh...', '..hhhhhhhh..', '.hhhhhhhhhh.', '.hhhhhhhhhh.', 'shhhhhhhhhh.', 'shhhhhhhhhhs',
+  't.hhhhhhhh.t', 'tt.ssssss.tt', 'tttttttttttt', '.tttttttttt.', '.tttttttttt.', '..tttttttt..',
+];
+const SIT_UP_B = SIT_UP_A.map((r, j) => j === 5 ? '.hhhhhhhhhhs' : r);
+
+function hairMods(r, view, m) {
+  const s = (j, i, c) => { if (r[j] && i >= 0 && i < r[j].length) r[j][i] = c; };
+  if (m.style === 'bun') { if (view === 'right') { s(0, 3, 'h'); s(0, 4, 'h'); } else { s(0, 5, 'h'); s(0, 6, 'h'); } }
+  if (m.style === 'spiky') { s(0, 3, 'h'); s(0, 6, 'h'); s(0, 8, 'h'); }
+  if (m.style === 'long') {
+    if (view === 'down') { for (const j of [7, 8, 9]) { s(j, 1, 'h'); s(j, 10, 'h'); } s(8, 2, 'h'); s(8, 9, 'h'); }
+    else if (view === 'up') { for (const j of [7, 8]) for (let i = 2; i <= 9; i++) s(j, i, 'h'); for (let i = 3; i <= 8; i++) s(9, i, 'h'); }
+    else for (const j of [7, 8, 9]) for (let i = 2; i <= 4; i++) s(j, i, 'h');
+  }
+  if (m.beard) {
+    if (view === 'down') { for (let i = 2; i <= 9; i++) s(7, i, 'h'); for (let i = 4; i <= 7; i++) s(8, i, 'h'); }
+    else if (view === 'right') { for (let i = 6; i <= 10; i++) s(7, i, 'h'); s(8, 6, 'h'); s(8, 7, 'h'); }
+  }
+}
+const HAIRS = ['#1a1a24', '#2a1a14', '#3a2a20', '#4a3020', '#6b3a22', '#8a5a32', '#c8742a', '#e3c26a', '#9aa4b0', '#1a1a24', '#2a1a14'];
+const SKINS = [['#f6d0a8', '#e0b088'], ['#e8b48a', '#cf9668'], ['#c68a5e', '#a87048'], ['#8d5a3b', '#74472c'], ['#5e3b26', '#4a2d1c']];
+const SHIRTS = ['#22b573', '#3b6fd6', '#ec8f2b', '#d9453b', '#8b5cf6', '#f1e9d6', '#2f9a8a', '#f472b6', '#e9c46a', '#5b6a95', '#f4f4f0', '#3a3f55', '#b85c38', '#6aa0c8'];
+const PANTS = ['#2f3a5c', '#3a3f55', '#5a4a3a', '#3b5a96', '#2a2238', '#6b6f7a', '#8a7a5a'];
+function randomLook() {
+  const style = pick(['short', 'short', 'long', 'long', 'bun', 'spiky']);
+  return { hair: pick(HAIRS), skin: irnd(0, 4), shirt: pick(SHIRTS), pants: pick(PANTS), style, beard: (style === 'short' || style === 'spiky') && chance(0.25) };
+}
+// build: 'tall' adds a row of height (head 1px higher), 'small' is a row shorter and a bit narrower
+function buildMod(rows, m, row, front) {
+  if (m.build === 'small' && front) rows = rows.map((r, j) => {   // narrower torso / arms in front and back views
+    if (j < 9 || j > 12) return r;
+    const a = r.split('');
+    if (a[1] === 's') a[2] = 's'; if (a[10] === 's') a[9] = 's';
+    a[1] = a[1] === 'h' ? 'h' : '.'; a[10] = a[10] === 'h' ? 'h' : '.';
+    return a.join('');
+  });
+  if (m.build === 'tall') { const r = rows.slice(1); r.splice(row - 1, 0, r[row - 1]); return r; }
+  if (m.build === 'small') { const r = rows.slice(); r.splice(row, 1); r.unshift('.'.repeat(r[0].length)); return r; }
+  return rows;
+}
+function buildFrames(m) {
+  const sk = SKINS[m.skin];
+  const pal = { h: m.hair, s: sk[0], S: sk[1], e: '#1a1c3a', t: m.shirt, T: shade(m.shirt, 0.78), p: m.pants, k: '#2a2238' };
+  const mod = (base, view) => { const r = base.map(s => s.split('')); hairMods(r, view, m); return r.map(a => a.join('')); };
+  const legs = (rows, l) => rows.slice(0, 13).concat(l);
+  const down = mod(DOWN, 'down'), up = mod(UP, 'up'), right = mod(RIGHT, 'right');
+  const F = {};
+  // stand/walk frames stretch at the hips (row 13), seated frames at the chest (row 9)
+  const b = (k, rows, flip, row = 13, front = true) => { F[k] = bakeRows(buildMod(rows, m, row, front), pal, flip); };
+  b('down', down); b('downA', legs(down, LEGS_A)); b('downB', legs(down, LEGS_B));
+  b('up', up); b('upA', legs(up, LEGS_A)); b('upB', legs(up, LEGS_B));
+  b('right', right, false, 13, false); b('rightA', legs(right, LEGS_SIDE), false, 13, false); b('left', right, true, 13, false); b('leftA', legs(right, LEGS_SIDE), true, 13, false);
+  const sa = mod(SIDE_SIT_A, 'right'), sb = mod(SIDE_SIT_B, 'right');
+  b('sitRightA', sa, false, 9, false); b('sitRightB', sb, false, 9, false); b('sitLeftA', sa, true, 9, false); b('sitLeftB', sb, true, 9, false);
+  b('sitDown', down.slice(0, 14), false, 9); b('sitUpA', mod(SIT_UP_A, 'up'), false, 9); b('sitUpB', mod(SIT_UP_B, 'up'), false, 9);
+  F.skin = sk[0];
+  return F;
+}
+
+// ---------------------------------------------------------------- layout (grid cells; x 6-47 = office, 0-5 = corridor)
+// 42 cells wide: 3 small offices of 8 cells + the conference room (15) along the windows
+const blocked = new Uint8Array(GX * GY), isSeat = new Uint8Array(GX * GY);
+const idx = (x, y) => y * GX + x;
+const block = (x, y) => { if (x >= 0 && y >= 0 && x < GX && y < GY) blocked[idx(x, y)] = 1; };
+const blockRect = (x0, y0, x1, y1) => { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) block(x, y); };
+const OFFICES = [{ x0: 6, x1: 13 }, { x0: 15, x1: 22 }, { x0: 24, x1: 31 }, { x0: 33, x1: 47 }];
+const DIVIDERS = [14, 23, 32];
+const GLASS_DOORS = [[8, 11], [17, 20], [26, 29], [43, 46]];      // wide sliding patio doors: centred on the small offices, conference one on its right side
+const DOOR_CELLS = GLASS_DOORS.flatMap(([a, b]) => Array.from({ length: b - a + 1 }, (_, i) => a + i));
+const BLOCK = { x0: 16, x1: 26, y0: 21, y1: 27, wall: 20 };        // closet (17-19) | washroom (21-25)
+const ROOM_DOORS = [{ x: 18, kind: 'supplies' }, { x: 22, kind: 'wc' }];
+const LUNCH_RUG = { x0: 36, y0: 19, x1: 41, y1: 26 };
+blockRect(0, 0, 5, 23);                                            // neighbours, above the corridor
+for (let x = 6; x < GX; x++) if (!DOOR_CELLS.includes(x)) block(x, 8);   // office wall with the glass doors
+for (const x of DIVIDERS) blockRect(x, 0, x, 7);
+blockRect(BLOCK.x0, BLOCK.y0, BLOCK.x1, BLOCK.y1);
+
+// tables: desk banks, office desks, conference, lunch and bar tables (drawn row by row so people sort around them)
+const WHITE_DESK = { top: '#f3f3ef', frame: '#c08850', front: '#b97a45', legs: '#8a5a30' };
+const WHITE_TABLE = { top: '#f6f6f2', frame: '#d8d8d2', front: '#e6e6e0', legs: '#3a3f4a' };
+const BAR_TABLE = { top: '#c8905a', frame: '#a86b3a', front: '#8a5a30', legs: '#3a3f4a' };
+const TABLES = [
+  { x0: 6, x1: 7, y0: 10, y1: 19, s: WHITE_DESK, mid: false },       // bank 1 (along the left wall, runs a bit long at the bottom)
+  { x0: 15, x1: 17, y0: 10, y1: 16, s: WHITE_DESK, mid: true },      // bank 2
+  { x0: 25, x1: 27, y0: 10, y1: 16, s: WHITE_DESK, mid: true },      // bank 3
+  { x0: 35, x1: 37, y0: 10, y1: 16, s: WHITE_DESK, mid: true },      // bank 4
+  { x0: 46, x1: 47, y0: 10, y1: 14, s: WHITE_DESK, mid: false },     // bank 5 (right wall)
+  // small offices: an L-desk (two desks) against the right wall: one runs down the wall, the other comes off its bottom end
+  ...OFFICES.slice(0, 3).flatMap(o => [{ x0: o.x1, x1: o.x1, y0: 0, y1: 3, s: WHITE_DESK }, { x0: o.x1 - 3, x1: o.x1 - 1, y0: 3, y1: 3, s: WHITE_DESK }]),
+  { x0: 6, x1: 6, y0: 4, y1: 6, s: WHITE_DESK },                     // office 1: second desk on the left wall
+  { x0: 22, x1: 22, y0: 5, y1: 6, s: WHITE_DESK },                   // office 2: second desk on the right wall
+  { x0: 31, x1: 31, y0: 5, y1: 6, s: WHITE_DESK },                   // office 3: second desk on the right wall
+  { x0: 33, x1: 41, y0: 3, y1: 4, s: WHITE_TABLE },                  // conference table, against the left wall
+  { x0: 38, x1: 39, y0: 20, y1: 25, s: WHITE_TABLE },                // lunch table
+  { x0: 47, x1: 47, y0: 19, y1: 25, s: BAR_TABLE },                  // long bar table on the right wall (work station)
+];
+for (const t of TABLES) blockRect(t.x0, t.y0, t.x1, t.y1);
+
+const CHAIR_COLS = ['#b8bcc4', '#b8bcc4', '#d9a245', '#c8ccd2'];
+const SEATS = [];
+function addSeat(x, y, face, kind, extra) {
+  const chair = kind === 'desk' ? pick(CHAIR_COLS) : kind === 'meet' ? '#2a2d36' : '#f0f0ec';   // conference chairs are black
+  const s = Object.assign({ x, y, face, kind, chair, occ: null, owner: null, lines: [0, 0, 0, 0, 0, 0, 0].map(() => irnd(0, 4)) }, extra || {});
+  isSeat[idx(x, y)] = 1; SEATS.push(s); return s;
+}
+// desk seats; side seats face the bank (monitor in the next cell), 'down' seats sit behind an office desk
+// role decides who sits there and how they behave (see ROLES)
+const deskSeats = ['cfo', 'coo', 'ceo'].map((role, i) => addSeat(OFFICES[i].x1 - 1, 2, 'right', 'desk', { role }));   // corner of each L-desk, facing the computer on the wall-side desk
+addSeat(7, 5, 'left', 'desk'); addSeat(21, 6, 'right', 'desk'); addSeat(30, 6, 'right', 'desk');   // offices' second desks: nobody sits there
+for (const y of [11, 13, 15, 17]) deskSeats.push(addSeat(8, y, 'left', 'desk', { role: 'am' }));     // left wall: account managers
+for (const [l, r, role] of [[14, 18, 'intern'], [24, 28, 'buyer'], [34, 38, 'buyer']])                  // islands: accounting/interns, then plant buyers
+  for (const y of [11, 13, 15]) {
+    const pt = l === 34 && y === 15;   // right-most island, bottom-left seat: product + tech (user 2372), with an extra monitor
+    deskSeats.push(addSeat(l, y, 'right', 'desk', pt ? { role: 'product', extraMon: true } : { role }));
+    deskSeats.push(addSeat(r, y, 'left', 'desk', { role }));
+  }
+for (const y of [11, 13]) deskSeats.push(addSeat(45, y, 'right', 'desk', { role: 'staff' }));
+// bar table: 3 stools; the top one is a real work station, the second monitor sits unused
+deskSeats.push(addSeat(46, 20, 'right', 'desk', { chair: '#3a3f4a', stool: true, role: 'staff' }));
+addSeat(46, 22, 'right', 'desk', { chair: '#3a3f4a', stool: true });
+addSeat(46, 24, 'right', 'bar', { chair: '#3a3f4a', stool: true });
+const MEET_SEATS = [
+  addSeat(42, 3, 'left', 'meet'), addSeat(35, 2, 'down', 'meet'), addSeat(35, 5, 'up', 'meet'), addSeat(37, 2, 'down', 'meet'), addSeat(37, 5, 'up', 'meet'),
+  addSeat(39, 2, 'down', 'meet'), addSeat(39, 5, 'up', 'meet'), addSeat(34, 2, 'down', 'meet'),
+];
+const LUNCH_SEATS = [
+  addSeat(37, 21, 'right', 'lunch'), addSeat(40, 21, 'left', 'lunch'), addSeat(37, 23, 'right', 'lunch'), addSeat(40, 23, 'left', 'lunch'),
+  addSeat(37, 25, 'right', 'lunch'), addSeat(40, 25, 'left', 'lunch'), addSeat(38, 19, 'down', 'lunch'), addSeat(39, 26, 'up', 'lunch'),
+];
+
+// props: [kind, x, y, w, h] in cells. Pillars 1-2 and 2-3 are joined by thin shelf racks (people can't pass there)
+const PROPS = [
+  ['storage', 6, 0, 2, 1],                                           // office 1: black storage unit, top-left corner
+  ['silver', 45, 15, 3, 3],                                          // big square silver storage unit below the right-wall desks
+  ['bookcase', 34, 27, 14, 1],                                       // white bookcases / cabinet storage along the bottom wall, fridge to right wall
+  ['post', 11, 18, 1, 1], ['post', 21, 18, 1, 1], ['post', 31, 18, 1, 1], ['post', 41, 18, 1, 1],
+  ['rack', 12, 18, 9, 1], ['rack', 22, 18, 9, 1],
+  ['counterV', 27, 22, 1, 6], ['coffee', 29, 27, 2, 1], ['cooler', 31, 27, 1, 1], ['fridge', 32, 26, 2, 2], ['island', 31, 21, 2, 4],
+];
+for (const [, x, y, w, h] of PROPS) blockRect(x, y, x + w - 1, y + h - 1);
+
+// spots people walk to; face = which way they look once there
+const SPOTS = {
+  coffee: { dur: [4, 7], icon: 'cup', spots: [{ x: 29, y: 26, face: 'down' }, { x: 30, y: 26, face: 'down' }] },
+  water: { dur: [3, 5], spots: [{ x: 31, y: 26, face: 'down' }] },
+  fridge: { dur: [3, 5], spots: [{ x: 32, y: 25, face: 'down' }] },
+  micro: { dur: [5, 8], spots: [{ x: 28, y: 22, face: 'left' }] },
+  sink: { dur: [4, 6], spots: [{ x: 28, y: 24, face: 'left' }, { x: 28, y: 25, face: 'left' }] },
+  wc: { dur: [25, 50], hide: true, spots: [{ x: 22, y: 20, face: 'down', door: 22 }] },
+  supplies: { dur: [4, 8], hide: true, spots: [{ x: 18, y: 20, face: 'down', door: 18 }] },
+  island: { dur: [15, 30], icon: 'cup', spots: [{ x: 30, y: 22, face: 'right' }, { x: 33, y: 22, face: 'left' }] },
+};
+const ACTS = [['type', 44], ['call', 22], ['walkcall', 4], ['chat', 5], ['meeting', 2], ['coffee', 6], ['water', 3], ['fridge', 2], ['sink', 2], ['wc', 3], ['supplies', 1], ['island', 3]];
+const spotUser = (k, i) => SPOTS[k].spots[i] && SPOTS[k].spots[i].using;
+const DOCK = { x: 15, y: 27 };
+
+const FLOOR = [], AISLE = [];
+for (let y = 0; y < GY; y++) for (let x = 6; x < GX; x++) if (!blocked[idx(x, y)] && !isSeat[idx(x, y)]) { FLOOR.push([x, y]); if (y >= 9 && y <= 20) AISLE.push([x, y]); }
+
+// ---------------------------------------------------------------- pathfinding (4-way BFS)
+function bfs(sx, sy, tx, ty) {
+  if (sx === tx && sy === ty) return [];
+  if (sx < 0 || sy < 0 || sx >= GX || sy >= GY) return null;
+  const start = idx(sx, sy), goal = idx(tx, ty), prev = new Int16Array(GX * GY).fill(-1), q = [start];
+  prev[start] = start;
+  for (let qi = 0; qi < q.length; qi++) {
+    const c = q[qi];
+    if (c === goal) break;
+    const cx = c % GX, cy = (c / GX) | 0;
+    for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+      const nx = cx + dx, ny = cy + dy;
+      if (nx < 0 || ny < 0 || nx >= GX || ny >= GY) continue;
+      const n = idx(nx, ny);
+      if (prev[n] !== -1 || ((blocked[n] || isSeat[n]) && n !== goal)) continue;
+      prev[n] = c; q.push(n);
+    }
+  }
+  if (prev[goal] === -1) return null;
+  const path = [];
+  for (let c = goal; c !== start; c = prev[c]) path.push([c % GX, (c / GX) | 0]);
+  return path.reverse();
+}
+
+// ---------------------------------------------------------------- coroutines
+let DT = 1 / FPS, TIME = 0;
+class Co {
+  constructor(fn) { this.it = fn(); this.wait = 0; this.until = null; this.done = false; }
+  tick() {
+    if (this.done) return;
+    if (this.wait > 0) { this.wait -= DT; if (this.wait > 0) return; }
+    if (this.until) { if (!this.until()) return; this.until = null; }
+    const r = this.it.next();
+    if (r.done) { this.done = true; return; }
+    if (typeof r.value === 'number') this.wait = r.value;
+    else if (typeof r.value === 'function') this.until = r.value;
+  }
+}
+function* walkTo(e, tx, ty, speed = WALK) {
+  const path = bfs(e.tx, e.ty, tx, ty);
+  if (!path) return false;
+  e.pose = 'walk';
+  for (const [nx, ny] of path) {
+    e.dir = nx > e.tx ? 'right' : nx < e.tx ? 'left' : ny > e.ty ? 'down' : 'up';
+    const gx = nx * C8, gy = ny * C8;
+    for (;;) {
+      const dx = gx - e.px, dy = gy - e.py, st = speed * DT;
+      if (Math.abs(dx) + Math.abs(dy) <= st) { e.px = gx; e.py = gy; break; }
+      e.px += Math.sign(dx) * Math.min(st, Math.abs(dx));
+      e.py += Math.sign(dy) * Math.min(st, Math.abs(dy));
+      e.walkT += DT;
+      yield 0;
+    }
+    e.tx = nx; e.ty = ny;
+  }
+  e.pose = 'stand';
+  return true;
+}
+// straight line in pixels, x first then y (used on the sidewalk outside)
+function* walkStraight(e, x, y, speed = WALK) {
+  e.pose = 'walk';
+  for (;;) {
+    const dx = x - e.px, dy = y - e.py, st = speed * DT;
+    if (Math.abs(dx) + Math.abs(dy) <= st) { e.px = x; e.py = y; break; }
+    if (Math.abs(dx) > 0.01) { e.dir = dx > 0 ? 'right' : 'left'; e.px += Math.sign(dx) * Math.min(st, Math.abs(dx)); }
+    else { e.dir = dy > 0 ? 'down' : 'up'; e.py += Math.sign(dy) * Math.min(st, Math.abs(dy)); }
+    e.walkT += DT;
+    yield 0;
+  }
+  e.pose = 'stand';
+}
+
+// ---------------------------------------------------------------- the team
+const world = { hour: hourNow() };
+// personalities. acts = activity weights, talk = how likely they are to say a one-liner (0 = never),
+// fixed = in every weekday regardless of the day's headcount
+const DESKBOUND = [['type', 64], ['call', 24], ['meeting', 1], ['coffee', 3], ['water', 2], ['wc', 2]];   // rarely leaves the desk
+const ROLES = {
+  cfo: { acts: DESKBOUND, talk: 0.5, fixed: true, in: [7.2, 7.4], out: [18.3, 18.6], lunch: 'desk',
+    look: { hair: '#6b4a2a', skin: 0, shirt: '#3b5a96', pants: '#2a2238', style: 'short', beard: true } },
+  coo: { acts: DESKBOUND, talk: 0.5, fixed: true, in: [7.9, 8.3], out: [17.0, 17.5], lunch: 'desk',
+    look: { hair: '#1a1a24', skin: 2, shirt: '#e8506a', pants: '#2f3a5c', style: 'long', build: 'small' } },
+  ceo: { acts: DESKBOUND, talk: 0.5, fixed: true, in: [7.9, 8.4], out: [17.0, 17.6], lunch: 'desk',
+    look: { hair: '#8a5a32', skin: 0, shirt: '#f4f4f0', pants: '#3a3f55', style: 'short', build: 'tall' } },
+  buyer: { talk: 3, acts: [['type', 26], ['call', 32], ['walkcall', 8], ['chat', 10], ['island', 5], ['coffee', 6], ['water', 3], ['fridge', 2], ['sink', 1], ['wc', 3], ['meeting', 1], ['supplies', 1]] },
+  am: { talk: 1.5, acts: ACTS },
+  intern: { talk: 0, acts: [['type', 72], ['coffee', 6], ['water', 4], ['wc', 3], ['supplies', 3], ['fridge', 2], ['sink', 2]] },
+  staff: { talk: 1, acts: ACTS },
+  product: { talk: 1, fixed: true, days: ['tue', 'thu'], acts: ACTS, look: { hair: '#1a1a24', skin: 1, shirt: '#22b573', pants: '#2f3a5c', style: 'short' } },
+};
+const workers = deskSeats.map((seat, i) => {   // one person per desk; who comes in depends on the day (see pickRoster)
+  const R0 = ROLES[seat.role], look = R0.look || randomLook();
+  const w = {
+    i, look, role: seat.role, acts: R0.acts, talk: R0.talk, fixed: !!R0.fixed,
+    frames: buildFrames(look), home: seat, sitAt: null,
+    px: seat.x * C8, py: seat.y * C8, tx: seat.x, ty: seat.y, dir: 'down',
+    pose: 'stand', seated: false, present: false, hidden: false, held: false, summon: null, headset: false, walkT: 0, bubble: null,
+    in: R0.in ? rnd(R0.in[0], R0.in[1]) : 7.9 + rnd(0, 1.2), out: R0.out ? rnd(R0.out[0], R0.out[1]) : 16.4 + rnd(0, 1.4),
+    lunch: 11.6 + rnd(0, 1.0), lunchLen: rnd(0.4, 0.75), lunchMode: R0.lunch || (chance(0.6) ? 'table' : 'out'), lunchDone: false,
+    headX: 0, headTop: 0,
+  };
+  seat.owner = w;
+  return w;
+});
+const lunchTime = w => world.hour >= w.lunch && world.hour < w.lunch + w.lunchLen;
+// Who's in today: Tue/Thu 80-95% of desks, Mon/Wed/Fri 10-30%, weekends nobody.
+// Seeded by the date so the same people show up all day (and on every screen showing the page that day).
+let rosterKey = '';
+function pickRoster() {
+  const z = zoneDay();
+  if (z.key === rosterKey) return;
+  rosterKey = z.key;
+  let s = 0; for (const ch of z.key) s = (Math.imul(s, 31) + ch.charCodeAt(0)) | 0;
+  const r = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const frac = z.wd === 'tue' || z.wd === 'thu' ? 0.8 + 0.15 * r() : z.wd === 'sat' || z.wd === 'sun' ? 0 : 0.1 + 0.2 * r();
+  const weekday = z.wd !== 'sat' && z.wd !== 'sun';
+  const rest = workers.filter(w => !w.fixed);   // the execs and product come in (execs every weekday, product Tue/Thu)
+  workers.forEach(w => { if (w.fixed) w.today = weekday && (!ROLES[w.role].days || ROLES[w.role].days.includes(z.wd)); });
+  const n = Math.min(rest.length, PEOPLE != null ? Math.max(0, PEOPLE - workers.filter(w => w.fixed && w.today).length) : Math.round(frac * rest.length));
+  const order = rest.map(w => [r(), w]).sort((a, b) => a[0] - b[0]).map(p => p[1]);
+  order.forEach((w, i) => { w.today = i < n; });
+}
+pickRoster();
+function wantPresent(w) {
+  const h = world.hour;
+  if (!w.today) return false;
+  if (h < w.in || h >= w.out) return false;
+  if (w.lunchMode === 'out' && lunchTime(w)) return false;
+  return true;
+}
+const say = (w, icon, dur) => { w.bubble = { icon, t: dur }; };
+function sit(w, seat) {
+  w.px = seat.x * C8; w.py = seat.y * C8; w.tx = seat.x; w.ty = seat.y;
+  w.seated = true; w.sitAt = seat; seat.occ = w; w.dir = seat.face;
+  w.pose = seat.kind === 'desk' ? 'type' : 'idle';
+}
+function standUp(w) {
+  if (!w.seated) return;
+  w.seated = false; if (w.sitAt) w.sitAt.occ = null; w.sitAt = null; w.pose = 'stand'; w.headset = false;
+}
+const atDesk = w => w.seated && w.sitAt === w.home;
+function* sitFor(w, t) { while ((t > 0 || w.held) && !(w.summon && !w.held)) { t -= DT; yield 0; } }
+function* goHome(w) { yield* walkTo(w, w.home.x, w.home.y); sit(w, w.home); }
+
+function* life(w) {
+  if (w.present) yield* sitFor(w, rnd(1, 25));   // stagger: people already at work don't all start something at once
+  for (;;) {
+    if (!wantPresent(w)) { if (w.present) yield* leave(w); yield 2; continue; }
+    if (!w.present) yield* arrive(w);
+    if (w.held) yield () => !w.held;
+    if (w.summon) { yield* attendMeeting(w); continue; }
+    if (lunchTime(w) && w.lunchMode === 'table' && !w.lunchDone) { yield* lunchAtTable(w); continue; }
+    if (lunchTime(w) && w.lunchMode === 'desk' && !w.lunchDone) {   // execs eat at their desk
+      if (!atDesk(w)) yield* goHome(w);
+      w.pose = 'eat';
+      while (lunchTime(w) && !w.summon) yield 0.5;
+      w.lunchDone = true; if (atDesk(w)) w.pose = 'type';
+      continue;
+    }
+    yield* activity(w);
+  }
+}
+// people come down the building hallway (left) and in through our door
+function* arrive(w) {
+  const row = chance(0.5) ? 25 : 26;
+  Object.assign(w, { present: true, hidden: false, seated: false, pose: 'stand', px: hallX(), py: row * C8, tx: -1, ty: -1 });
+  yield* walkStraight(w, 0, row * C8);
+  w.tx = 0; w.ty = row;
+  yield* goHome(w);
+  if (chance(0.4)) say(w, pick(['smile', 'cup']), 1.6);
+  yield rnd(1, 3);
+}
+function* leave(w) {
+  standUp(w); w.summon = null; yield 0.4;
+  if (chance(0.4)) say(w, 'smile', 1.4);
+  const row = chance(0.5) ? 25 : 26;
+  yield* walkTo(w, 0, row);
+  yield* walkStraight(w, hallX(), row * C8);
+  w.present = false; w.bubble = null; w.tx = -1; w.ty = -1;
+}
+function* activity(w) {
+  const a = weighted(w.acts);
+  if (a === 'type') {
+    if (atDesk(w)) w.pose = 'type';
+    if (chance(0.12)) { yield* sitFor(w, rnd(4, 10)); say(w, 'bulb', 1.6); }
+    yield* sitFor(w, rnd(12, 40));
+  } else if (a === 'call') yield* deskCall(w);
+  else if (a === 'walkcall') yield* walkCall(w);
+  else if (a === 'chat') yield* doChat(w);
+  else if (a === 'meeting') yield* startMeeting(w);  else yield* visit(w, a);
+}
+function* deskCall(w) {
+  if (!atDesk(w)) { yield* goHome(w); }
+  w.pose = 'idle'; say(w, 'excl', 1.0); yield 1.0;
+  w.pose = 'call'; w.headset = true;
+  const end = rnd(12, 36);
+  for (let t = 0; t < end && !w.summon;) { say(w, weighted(CALL_ICONS), 1.8); const gap = rnd(2.2, 4.4); yield gap; t += gap; }
+  w.headset = false; w.pose = 'type';
+  if (chance(0.4)) say(w, pick(['check', 'dollar', 'smile']), 1.5);
+  yield* sitFor(w, rnd(3, 8));
+}
+// on the headset, pacing the aisle
+function* walkCall(w) {
+  standUp(w); w.headset = true; yield 0.4;
+  const near = AISLE.filter(([x, y]) => Math.abs(x - w.home.x) + Math.abs(y - w.home.y) < 9);
+  for (let k = irnd(2, 4); k > 0; k--) {
+    const [x, y] = pick(near.length ? near : AISLE);
+    say(w, weighted(CALL_ICONS), 1.8);
+    yield* walkTo(w, x, y);
+    say(w, weighted(CALL_ICONS), 1.8);
+    yield rnd(2, 4);
+  }
+  w.headset = false;
+  yield* goHome(w);
+}
+function visitCell(seat) {
+  const d = { right: [-1, 0], left: [1, 0], down: [1, 0], up: [1, 0] }[seat.face];
+  for (const [dx, dy] of [d, [0, 1], [0, -1], [-1, 0], [1, 0]]) {
+    const x = seat.x + dx, y = seat.y + dy;
+    if (x >= 6 && y >= 0 && x < GX && y < GY && !blocked[idx(x, y)] && !isSeat[idx(x, y)] && !workers.some(q => q.present && q.tx === x && q.ty === y)) return [x, y];
+  }
+  return null;
+}
+function* doChat(w) {
+  const cands = workers.filter(o => o !== w && o.present && atDesk(o) && o.pose === 'type' && !o.held && !o.summon && o.talk > 0);   // interns don't chat
+  if (!cands.length) { yield* sitFor(w, rnd(8, 15)); return; }
+  const near = cands.filter(o => Math.abs(o.home.x - w.home.x) + Math.abs(o.home.y - w.home.y) < 14);  // mostly their neighbours
+  const o = pick(near.length && chance(0.75) ? near : cands), cell = visitCell(o.home);
+  if (!cell) { yield* sitFor(w, 6); return; }
+  standUp(w); yield 0.3;
+  const ok = yield* walkTo(w, cell[0], cell[1]);
+  if (ok && o.present && atDesk(o) && o.pose === 'type' && !o.summon) {
+    o.held = true; o.pose = 'idle';
+    w.dir = o.home.x > cell[0] ? 'right' : o.home.x < cell[0] ? 'left' : o.home.y < cell[1] ? 'up' : 'down';
+    for (let k = irnd(3, 6); k > 0; k--) { say(k % 2 ? o : w, weighted(CHAT_ICONS), 1.6); yield rnd(1.8, 2.6); }
+    o.held = false; if (atDesk(o)) o.pose = 'type';
+  }
+  yield* goHome(w);
+}
+function* visit(w, kind) {
+  const S = SPOTS[kind], free = S.spots.filter(s => !s.busy);
+  if (!free.length) { yield* sitFor(w, rnd(6, 12)); return; }
+  const spot = pick(free);
+  spot.busy = w; standUp(w); yield 0.3;
+  const ok = yield* walkTo(w, spot.x, spot.y);
+  if (ok) {
+    w.dir = spot.face; spot.using = w;
+    if (S.hide) { yield 0.4; w.hidden = true; }
+    else if (S.icon) say(w, S.icon, 1.8);
+    yield rnd(S.dur[0], S.dur[1]);
+    w.hidden = false; spot.using = null;
+  }
+  spot.busy = null;
+  yield* goHome(w);
+}
+// lunch at the big table (or at the desk if it is full)
+function* lunchAtTable(w) {
+  standUp(w); yield 0.3;
+  if (chance(0.5) && !SPOTS.micro.spots[0].busy) {
+    const s = SPOTS.micro.spots[0]; s.busy = w;
+    if (yield* walkTo(w, s.x, s.y)) { w.dir = 'down'; s.using = w; yield rnd(4, 7); s.using = null; }
+    s.busy = null;
+  }
+  const free = LUNCH_SEATS.filter(s => !s.occ && !s.claimed);
+  const seat = free.length ? pick(free) : w.home;
+  seat.claimed = true;
+  const ok = yield* walkTo(w, seat.x, seat.y);
+  seat.claimed = false;
+  if (ok) {
+    sit(w, seat); w.pose = 'eat'; say(w, 'food', 1.6);
+    while (lunchTime(w) && !w.summon) yield 0.5;
+  }
+  w.lunchDone = true;
+  standUp(w);
+  yield* goHome(w);
+}
+// meetings in the glass room top-right
+let meeting = null;
+function* startMeeting(w) {
+  if (meeting) { yield* sitFor(w, 8); return; }
+  const cands = shuffle(workers.filter(o => o !== w && o.present && atDesk(o) && o.pose === 'type' && !o.held && !o.summon && o.acts !== DESKBOUND));   // execs aren't pulled into meetings
+  if (!cands.length) { yield* sitFor(w, 8); return; }
+  const members = [w, ...cands.slice(0, irnd(1, Math.min(MEET_SEATS.length - 1, 5, cands.length)))];
+  meeting = { members, end: TIME + 30 + rnd(50, 110), talkT: 0 };
+  members.forEach((m, i) => { m.summon = meeting; m.meetSeat = MEET_SEATS[i]; });
+  yield* attendMeeting(w);
+}
+function* attendMeeting(w) {
+  const mt = w.summon;
+  standUp(w); yield rnd(0.3, 1.5);
+  if (yield* walkTo(w, w.meetSeat.x, w.meetSeat.y)) {
+    sit(w, w.meetSeat);
+    while (TIME < mt.end && wantPresent(w)) yield 0.5;
+  }
+  standUp(w); w.summon = null; w.meetSeat = null;
+  if (meeting === mt && mt.members.every(m => !m.summon)) meeting = null;
+  yield* goHome(w);
+}
+
+// robot vacuum: runs when the office is empty at night
+const roomba = { px: DOCK.x * C8, py: DOCK.y * C8, tx: DOCK.x, ty: DOCK.y, dir: 'down', walkT: 0, pose: 'stand' };
+function* roombaLife() {
+  for (;;) {
+    const h = world.hour, [, ss] = sunTimes(), empty = !workers.some(w => w.present);
+    if (empty && (h >= ss + 1 || h < 5)) { const [x, y] = pick(FLOOR); yield* walkTo(roomba, x, y, 12); yield rnd(0.3, 1.5); }
+    else { if (roomba.tx !== DOCK.x || roomba.ty !== DOCK.y) yield* walkTo(roomba, DOCK.x, DOCK.y, 12); yield 3; }
+  }
+}
+
+// ---------------------------------------------------------------- the toy poodles (one white, one brown) drop by now and then
+// W coat, S coat shade, e eye, n nose. They wander around the office for a while, leave, and come back later.
+const DOG_R_A = ['......WWW..', 'WW...WWWWW.', 'WW...WWeWWn', '.WWWWWWWWW.', '..WWWWWWW..', '..W.W..W.W.', '..S.S..S.S.'];
+const DOG_R_B = DOG_R_A.map((r, j) => j === 5 ? '...W.W..WW.' : j === 6 ? '...S.S..SS.' : r);
+const DOG_D_A = ['..WWWW..', '.WWWWWW.', 'WWeWWeWW', 'WWWnnWWW', '.WWWWWW.', '.WWWWWW.', '.W.WW.W.', '.S.SS.S.'];
+const DOG_D_B = DOG_D_A.map((r, j) => j === 6 ? '..W..W..' : j === 7 ? '..S..S..' : r);
+const backOf = rows => rows.map((r, j) => j === 2 || j === 3 ? 'WWWWWWWW' : r);
+function dogFrames(coat, coatShade) {
+  const pal = { W: coat, S: coatShade, e: '#1a1c3a', n: '#1a1214' }, F = {};
+  F.rightA = bakeRows(DOG_R_A, pal); F.rightB = bakeRows(DOG_R_B, pal); F.leftA = bakeRows(DOG_R_A, pal, true); F.leftB = bakeRows(DOG_R_B, pal, true);
+  F.downA = bakeRows(DOG_D_A, pal); F.downB = bakeRows(DOG_D_B, pal); F.upA = bakeRows(backOf(DOG_D_A), pal); F.upB = bakeRows(backOf(DOG_D_B), pal);
+  return F;
+}
+const dogs = [dogFrames('#f6f4ee', '#d4d0c6'), dogFrames('#8a5a32', '#6b4126')].map(frames =>
+  ({ frames, present: false, px: 0, py: 0, tx: -1, ty: -1, dir: 'right', walkT: 0, pose: 'stand', bubble: null, headX: 0, headTop: 0, follow: false }));
+const dogTime = () => world.hour >= 9 && world.hour < 16.5 && workers.filter(w => w.present).length >= 2;
+function* waitOrFollow(d, secs) { const until = TIME + secs; yield () => d.follow || TIME >= until; }
+function* dogLife(d, other) {
+  yield* waitOrFollow(d, rnd(30, 400));
+  for (;;) {
+    if (d.follow) { d.follow = false; yield rnd(1.5, 4); yield* dogVisit(d); continue; }
+    if (dogTime() && chance(0.35)) {
+      if (!other.present && chance(0.6)) other.follow = true;   // usually they come as a pair
+      yield* dogVisit(d);
+      yield* waitOrFollow(d, rnd(600, 2400));
+    } else yield* waitOrFollow(d, rnd(60, 300));
+  }
+}
+function* dogVisit(d) {
+  const row = chance(0.5) ? 25 : 26, SPD = 38;
+  Object.assign(d, { present: true, px: hallX(), py: row * C8, tx: -1, ty: -1, pose: 'walk' });
+  yield* walkStraight(d, 0, row * C8, SPD);
+  d.tx = 0; d.ty = row;
+  const end = TIME + rnd(180, 600);
+  while (TIME < end && dogTime()) {     // trot around, stop and sniff, trot on
+    const [x, y] = pick(FLOOR);
+    yield* walkTo(d, x, y, SPD);
+    d.pose = 'stand'; yield rnd(0.5, 4);
+  }
+  yield* walkTo(d, 0, row, SPD);
+  yield* walkStraight(d, hallX(), row * C8, SPD);
+  d.present = false; d.bubble = null; d.tx = -1; d.ty = -1;
+}
+function drawDog(d) {
+  const X = Math.round(d.px), Y = Math.round(d.py), F = d.frames, f = d.pose === 'walk' && Math.floor(d.walkT * 10) % 2 ? 'B' : 'A';
+  let sx = X - 1, sy = Y + 1;
+  if (d.dir !== 'left' && d.dir !== 'right') { sx = X; sy = Y; }
+  blit(F[d.dir + f], sx, sy);
+  d.headX = sx + 5; d.headTop = sy + 2;
+}
+
+// ---------------------------------------------------------------- furniture sprites
+const SPR = {};
+function buildSprites() {
+  SPR.post = mk(6, 22, () => {
+    R(0, 0, 6, 22, '#b8763c'); R(0, 0, 6, 3, '#d29a5e'); R(4, 3, 2, 19, '#8a5428');
+    for (const [x, y] of [[1, 6], [2, 11], [1, 15], [3, 18]]) R(x, y, 1, 2, '#9a6030');
+  });
+  SPR.coat = mk(8, 18, () => {
+    R(3, 2, 2, 15, '#5e3820'); R(1, 16, 6, 2, '#5e3820'); R(0, 1, 8, 2, '#5e3820');
+    R(0, 3, 3, 7, '#3b6fd6'); R(5, 3, 3, 8, '#7a4a2a'); R(1, 3, 1, 1, '#5b8af0');
+  });
+  SPR.shelf = mk(24, 18, () => {
+    R(0, 0, 24, 18, '#f4f4f0'); R(1, 1, 22, 16, '#dcdcd6');
+    for (const y of [5, 11]) R(1, y, 22, 1, '#f4f4f0');
+    R(2, 1, 2, 4, '#3b6fd6'); R(4, 2, 2, 3, '#f1e9d6'); R(15, 2, 2, 3, '#d9453b'); R(17, 1, 2, 4, '#3b6fd6'); R(19, 2, 2, 3, '#e9c46a');
+    R(3, 7, 5, 4, '#c8b48a'); R(11, 7, 7, 4, '#b8a070'); R(19, 8, 3, 3, '#f1e9d6');
+    R(2, 13, 5, 4, '#f1e9d6'); R(10, 13, 4, 4, '#c8b48a'); R(17, 13, 4, 4, '#ec8f2b');
+    R(0, 17, 1, 1, '#c8c8c2'); R(23, 17, 1, 1, '#c8c8c2');
+  });
+  SPR.cabinets = mk(8, 34, () => {
+    R(0, 2, 8, 32, '#f2f2ee'); R(0, 2, 8, 1, '#ffffff'); R(6, 2, 2, 32, '#d6d6d0');
+    for (const y of [10, 18, 26]) R(0, y, 8, 1, '#d6d6d0');
+    for (const y of [6, 14, 22, 30]) R(2, y, 3, 1, '#9aa4b0');
+    R(1, 0, 4, 3, '#3b6fd6'); R(5, 1, 2, 2, '#e9c46a');
+  });
+  // kitchen island: light wood butcher-block top, white cabinet base (photo)
+  SPR.island = mk(16, 36, () => {
+    R(0, 0, 16, 30, '#dcc08e'); R(0, 0, 16, 1, '#ecd4a6'); for (let y = 4; y < 30; y += 5) R(1, y, 14, 1, '#ceb07c');
+    R(0, 30, 16, 6, '#f2f2ee'); R(0, 30, 16, 1, '#ffffff'); R(7, 31, 1, 5, '#d6d6d0'); R(3, 33, 2, 1, '#9aa4b0'); R(10, 33, 2, 1, '#9aa4b0');
+    R(3, 3, 7, 4, '#f2f2ee'); P(4, 3, '#d9453b'); P(6, 3, '#e9c46a'); P(5, 4, '#7fd06a'); P(8, 4, '#ec8f2b');   // fruit bowl
+    R(9, 12, 5, 4, '#8a6a4a'); R(10, 13, 3, 1, '#a8885e');                                                   // boxes
+    R(3, 19, 3, 3, '#f1e9d6'); R(10, 22, 3, 3, '#d9453b'); R(4, 25, 2, 2, '#3b6fd6');                         // mugs
+  });
+  // kitchen counter along the washroom's right wall (photo: light top, dark lower cabinets): microwave, sink, dish rack, toaster
+  SPR.counterV = mk(8, 50, () => {
+    R(0, 2, 8, 48, '#3a3f4a'); R(0, 2, 6, 46, '#d8d4cc'); R(0, 2, 6, 1, '#ecebe6'); R(6, 2, 2, 48, '#454b58');
+    for (const y of [10, 22, 34, 46]) P(7, y, '#9aa4b0');
+    R(0, 0, 6, 8, '#f2f2ee'); R(1, 2, 4, 4, '#2a2f3a'); P(4, 1, '#9aa4b0');                  // microwave
+    R(1, 18, 4, 11, '#9aa4b0'); R(2, 19, 2, 9, '#6f7c8a'); R(0, 22, 2, 1, '#c8ccd2'); R(0, 25, 2, 1, '#c8ccd2');   // sink + taps
+    R(1, 32, 4, 6, '#c8ccd2'); P(2, 33, '#3b6fd6'); P(3, 35, '#f1e9d6'); P(2, 36, '#d9453b');  // dish rack
+    R(1, 41, 4, 5, '#2a2f3a'); R(2, 42, 2, 1, '#e8a040');                                       // toaster oven
+  });
+  SPR.cooler = mk(8, 20, () => {
+    R(1, 0, 6, 1, '#5aa0d8'); R(0, 1, 8, 7, '#8fd0f8'); R(1, 2, 2, 4, '#d6f0ff'); R(0, 7, 8, 1, '#5aa0d8');
+    R(0, 8, 8, 12, '#eef0f4'); R(0, 8, 8, 1, '#ffffff'); R(6, 9, 2, 11, '#c8ced8'); P(1, 11, '#3b6fd6'); P(4, 11, '#d9453b'); R(1, 14, 5, 1, '#c8ced8');
+  });
+  SPR.coffee = mk(16, 18, () => {
+    R(0, 6, 16, 5, '#d8d4cc'); R(0, 6, 16, 1, '#ecebe6'); R(0, 11, 16, 7, '#3a3f4a'); R(1, 12, 6, 5, '#454b58'); R(9, 12, 6, 5, '#454b58');
+    R(3, 0, 9, 10, '#1e2130'); R(3, 0, 9, 2, '#3a3f55'); R(5, 3, 5, 2, '#454b58'); R(6, 7, 3, 1, '#9aa4b0');
+  });
+  SPR.fridge = mk(16, 24, () => {
+    R(0, 0, 16, 24, '#f2f2ee'); R(0, 0, 16, 1, '#ffffff'); R(13, 0, 3, 24, '#d6d6d0'); R(0, 8, 16, 1, '#c8c8c2');
+    R(11, 2, 1, 4, '#9aa4b0'); R(11, 10, 1, 8, '#9aa4b0'); P(3, 3, '#d9453b'); P(6, 4, '#3b6fd6'); R(2, 12, 4, 5, '#fff6b0');
+  });
+}
+
+// ---------------------------------------------------------------- static building layer
+const BGX = 24, BGY = 30;   // bg canvas margin around the building's local origin
+let bg, wallFG;
+// one wide end-to-end window per small office; the conference room's window covers its left 30%
+const WINDOWS = OFFICES.map((o, i) => {
+  const x = o.x0 * C8 + 3, right = i < DIVIDERS.length ? DIVIDERS[i] * C8 - 1 : GX * C8 - 3;
+  const w = i < DIVIDERS.length ? right - x : Math.round((right - x) * 0.3);
+  return { x, y: -17, w, h: 12 };
+});
+
+const CLOCK = { x: 341, y: -11 };
+function buildLayers() {
+  bg = canvas(GX * C8 + BGX * 2, GY * C8 + BGY + 12);
+  g = bg.getContext('2d'); g.translate(BGX, BGY);
+  // hardwood floor, staggered planks
+  const planks = ['#c8894e', '#c2834a', '#cc8f55', '#bf7f45'];
+  for (let y = 0; y < GY * C8; y += 4) {
+    const row = y / 4, x0 = row * 7 % 24;
+    for (let x = -24 + x0; x < GX * C8; x += 24) {
+      const xs = Math.max(0, x), xe = Math.min(GX * C8, x + 24);
+      if (xe > xs) R(xs, y, xe - xs, 4, planks[(row * 3 + Math.floor(x / 24)) & 3]);
+      if (x >= 0) R(x, y, 1, 4, '#a86b38');
+    }
+    R(0, y + 3, GX * C8, 1, '#b2763f');
+  }
+  g.clearRect(0, 0, 48, 24 * C8);   // above the corridor is outside
+  // rug under the lunch table
+  const r = LUNCH_RUG;
+  R(r.x0 * C8 + 2, r.y0 * C8 + 2, (r.x1 - r.x0 + 1) * C8 - 4, (r.y1 - r.y0 + 1) * C8 - 4, '#bdb8ae'); R(r.x0 * C8 + 4, r.y0 * C8 + 4, (r.x1 - r.x0 + 1) * C8 - 8, (r.y1 - r.y0 + 1) * C8 - 8, '#cbc6bc');
+  // entrance mat + vacuum dock
+  R(2, 25 * C8 + 2, 12, 12, '#5a4a3a'); for (let k = 0; k < 4; k++) R(4 + k * 3, 25 * C8 + 4, 1, 8, '#6f5a46');
+  R(DOCK.x * C8, DOCK.y * C8 + 4, 8, 3, '#9aa4b0');
+  // soft shadows under furniture
+  const sh = 'rgba(40,20,10,0.18)';
+  for (const t of TABLES) R(t.x0 * C8, (t.y1 + 1) * C8 + 4, (t.x1 - t.x0 + 1) * C8, 2, sh);
+  for (const [, x, y, w, h] of PROPS) R(x * C8, (y + h) * C8, w * C8, 2, sh);
+  R(48, 0, GX * C8 - 48, 2, sh);
+  // closet (roofed) on the left, then one large washroom (open view)
+  const bx = BLOCK.x0 * C8, by = BLOCK.y0 * C8, bw = (BLOCK.x1 - BLOCK.x0 + 1) * C8, bh = (BLOCK.y1 - BLOCK.y0 + 1) * C8, cw = (BLOCK.wall - BLOCK.x0) * C8;
+  R(bx, by, bw, bh, OUT); R(bx + 1, by + 1, bw - 2, bh - 2, '#e2cfae');
+  R(bx + 3, by + 3, cw, bh - 6, '#d4ccbe'); for (let y = by + 3; y < by + bh - 3; y += 6) R(bx + 3, y, cw, 1, '#cac2b4');
+  R(bx + 5, by + 12, 6, 5, '#b8a070'); R(bx + 6, by + 13, 4, 1, '#9a8458'); R(bx + 5, by + 20, 6, 5, '#b8a070'); R(bx + 14, by + 14, 8, 8, '#9a8458'); R(bx + 6, by + 32, 12, 3, '#9aa4b0');
+  R(BLOCK.wall * C8 + 3, by + 1, 2, bh - 2, '#e2cfae'); R(BLOCK.wall * C8 + 3, by + 1, 1, bh - 2, '#c8b490');
+  const wx0 = BLOCK.wall * C8 + 5, wx1 = bx + bw - 3, wy0 = by + 3, wy1 = by + bh - 3;   // washroom floor
+  for (let y = wy0; y < wy1; y += 4) for (let x = wx0; x < wx1; x += 4) R(x, y, Math.min(4, wx1 - x), Math.min(4, wy1 - y), ((x - wx0 + y - wy0) / 4) % 2 ? '#e8eef2' : '#d8e2e8');
+  // corner shower, bottom-left: tray + curved glass
+  R(wx0, wy1 - 18, 18, 18, '#c8d4dc'); R(wx0 + 1, wy1 - 17, 16, 16, '#dce6ec'); P(wx0 + 8, wy1 - 9, '#8a98a4'); P(wx0 + 9, wy1 - 9, '#8a98a4');
+  for (let a = 0; a <= 20; a++) { const t = a / 20 * Math.PI / 2; P(wx0 + Math.sin(t) * 17, wy1 - Math.cos(t) * 17, '#7fb8d0'); }
+  R(wx0 + 1, wy1 - 17, 2, 2, '#9aa4b0');
+  // double-sink vanity on the right wall (top half)
+  R(wx1 - 8, wy0 + 2, 8, 24, OUT); R(wx1 - 7, wy0 + 3, 7, 22, '#f2f2ee'); R(wx1 - 7, wy0 + 3, 1, 22, '#d6d6d0');
+  for (const sy of [wy0 + 5, wy0 + 15]) { R(wx1 - 6, sy, 4, 6, '#c8d4dc'); R(wx1 - 5, sy + 1, 2, 4, '#9aaebc'); P(wx1 - 1, sy + 3, '#9aa4b0'); }
+  R(wx1, wy0 + 3, 1, 22, '#bfe6f0');                                                         // mirror strip
+  // toilet on the right wall (bottom), facing left: tank against the wall, bowl pointing into the room
+  R(wx1 - 4, wy1 - 18, 4, 11, OUT); R(wx1 - 3, wy1 - 17, 3, 9, '#f6f6f2');
+  R(wx1 - 12, wy1 - 17, 9, 9, OUT); R(wx1 - 11, wy1 - 16, 8, 7, '#ffffff'); R(wx1 - 10, wy1 - 15, 6, 5, '#dce6ec'); P(wx1 - 11, wy1 - 16, OUT); P(wx1 - 11, wy1 - 10, OUT);
+  R(wx0 + 22, wy0 + 10, 6, 8, '#7fa6f0');                                                     // bath mat at the vanity
+  for (const d of ROOM_DOORS) { R(d.x * C8 + 1, by - 1, 6, 4, OUT); R(d.x * C8 + 2, by, 4, 3, '#9a6a3c'); P(d.x * C8 + 5, by + 1, '#e9c46a'); }
+  // outer walls
+  const WALL = '#f2efe8';
+  R(45, 0, 3, 24 * C8, OUT); R(46, 0, 2, 24 * C8, WALL);
+  R(GX * C8, -20, 3, GY * C8 + 24, OUT); R(GX * C8, -20, 2, GY * C8 + 24, WALL);
+  R(-3, GY * C8, GX * C8 + 6, 4, OUT); R(-2, GY * C8, GX * C8 + 4, 3, WALL);
+  R(-3, 24 * C8, 3, 4 * C8, OUT); R(-2, 24 * C8, 2, 4 * C8, WALL);
+  g.clearRect(-3, 25 * C8, 3, 16); R(-3, 25 * C8, 3, 1, OUT); R(-3, 27 * C8 - 1, 3, 1, OUT);   // entrance door gap
+  // corridor north wall face with a painting
+  R(-3, 24 * C8 - 11, 51, 11, OUT); R(-2, 24 * C8 - 10, 50, 9, '#f2efe8'); R(-2, 24 * C8 - 2, 50, 1, '#d8d4cc');
+  R(14, 24 * C8 - 9, 14, 6, OUT); R(15, 24 * C8 - 8, 12, 4, '#d9453b'); R(18, 24 * C8 - 8, 4, 4, '#ec8f2b'); R(23, 24 * C8 - 7, 3, 2, '#2f9a8a');
+  // north wall face (windows filled in each frame)
+  R(45, -22, GX * C8 - 42, 22, OUT); R(46, -21, GX * C8 - 46, 20, WALL); R(46, -21, GX * C8 - 46, 2, '#ffffff'); R(46, -3, GX * C8 - 46, 2, '#d8d4cc');
+  for (const w of WINDOWS) g.clearRect(w.x, w.y, w.w, w.h);
+  // office dividers (white walls) meeting the north wall
+  for (const x of DIVIDERS) { R(x * C8 + 2, -3, 4, 8 * C8 + 3, OUT); R(x * C8 + 3, -3, 2, 8 * C8 + 3, WALL); }
+  // wall clock face
+  for (let dy = -7; dy <= 7; dy++) for (let dx = -7; dx <= 7; dx++) { const d2 = dx * dx + dy * dy; if (d2 <= 30) P(CLOCK.x + dx, CLOCK.y + dy, '#fbf8ee'); else if (d2 <= 44) P(CLOCK.x + dx, CLOCK.y + dy, '#2b2f3a'); }
+  for (const [dx, dy] of [[0, -5], [0, 5], [-5, 0], [5, 0]]) P(CLOCK.x + dx, CLOCK.y + dy, '#2b2f3a');
+
+  // window frames on top of the sky
+  wallFG = canvas(bg.width, bg.height); g = wallFG.getContext('2d'); g.translate(BGX, BGY);
+  for (const { x, y, w, h } of WINDOWS) {
+    R(x - 2, y - 2, w + 4, h + 4, OUT); g.clearRect(x, y, w, h);
+    R(x - 1, y - 1, w + 2, 1, '#2b2f3a'); R(x - 1, y + h, w + 2, 1, '#2b2f3a'); R(x - 1, y, 1, h, '#2b2f3a'); R(x + w, y, 1, h, '#2b2f3a');
+    const panes = Math.max(2, Math.round(w / 15));
+    for (let k = 1; k < panes; k++) R(Math.round(x + k * w / panes), y, 1, h, '#2b2f3a');
+    R(x, y + 5, w, 1, '#2b2f3a');
+    R(x - 3, y + h + 1, w + 6, 2, '#e2ded6'); R(x - 3, y + h + 3, w + 6, 1, OUT);
+  }
+}
+
+// ---------------------------------------------------------------- surroundings — fills any screen shape
+// left / right / below: neighbouring units (greyed out); the entrance hallway continues left; above: cement alley
+let ext = null, exteriorDirty = true, VW = 320, VH = 240, OX = 0, OY = 0;
+const outdoors = y => y < OY - 22;                    // view y: only the alley above the building is outside
+const HALL_Y0 = 24 * C8, HALL_Y1 = GY * C8;          // local y of the hallway floor
+const hallX = () => -OX - 16;                         // local x just past the left edge of the screen
+function buildExterior() {
+  ext = canvas(VW, VH); g = ext.getContext('2d');
+  const snow = weather === 'snow', wet = weather === 'rain';
+  // neighbouring units
+  R(0, 0, VW, VH, '#7d808a');
+  g.fillStyle = '#767983';
+  for (let d = -VH; d < VW; d += 6) for (let t = 0; t < VH; t++) { const x = d + t; if (x >= 0 && x < VW) g.fillRect(x, t, 1, 1); }
+  // cement alley / parking along the top
+  const top = OY - 22;
+  if (top > 0) {
+    const joint = snow ? '#dde3ea' : wet ? '#7e7b75' : '#9a978f';
+    R(0, 0, VW, top, snow ? '#eef2f6' : wet ? '#8e8b85' : '#aaa79f');
+    for (let x = (OX % 24) - 24; x < VW; x += 24) R(x, 0, 1, top, joint);
+    for (let y = top - 24; y > 0; y -= 24) R(0, y, VW, 1, joint);
+    if (!snow) for (let k = 0; k < VW * top / 160; k++) P(hash(k, 1) * VW, hash(k, 2) * top, wet ? '#85827c' : '#a19e96');
+    R(0, top - 1, VW, 1, OUT);
+  }
+  // hallway outside the entrance
+  const hy0 = OY + HALL_Y0, hy1 = OY + HALL_Y1, hx1 = OX - 3;
+  if (hx1 > 0) {
+    for (let y = hy0; y < hy1; y += 8) for (let x = hx1 - 8; x > -8; x -= 8) R(x, y, 8, 8, (Math.round((hx1 - x) / 8) + (y - hy0) / 8) % 2 ? '#d6d0c4' : '#cdc7ba');
+    R(0, hy0 - 11, hx1, 11, OUT); R(0, hy0 - 10, hx1, 9, '#f2efe8'); R(0, hy0 - 2, hx1, 1, '#d8d4cc');
+    for (let x = hx1 - 40; x > -12; x -= 56) { R(x, hy0 - 10, 10, 10, OUT); R(x + 1, hy0 - 9, 8, 9, '#9a6a3c'); P(x + 7, hy0 - 5, '#e9c46a'); }   // other units' doors
+    R(0, hy1, hx1, 4, OUT); R(0, hy1, hx1, 3, '#f2efe8');
+  }
+  exteriorDirty = false;
+}
+const lampPositions = () => OY - 22 > 10 ? [[OX + 60, OY - 30], [OX + 220, OY - 30]] : [];
+
+// ---------------------------------------------------------------- weather particles + sky
+const clouds = Array.from({ length: 8 }, () => ({ x: rnd(-30, GX * C8), y: rnd(-17, -11), w: irnd(8, 16), v: rnd(1, 2.4) }));
+const shadows = Array.from({ length: 5 }, () => ({ x: rnd(0, 1), y: rnd(0, 1), r: rnd(30, 60), v: rnd(2, 4) }));
+const drops = Array.from({ length: 160 }, () => ({ x: rnd(0, 1), y: rnd(0, 1), v: rnd(0.8, 1.2) }));
+const flakes = Array.from({ length: 130 }, () => ({ x: rnd(0, 1), y: rnd(0, 1), v: rnd(0.5, 1), p: rnd(0, 6), s: chance(0.25) ? 2 : 1 }));
+const stars = Array.from({ length: 30 }, () => ({ x: irnd(50, GX * C8 - 4), y: irnd(-17, -8), p: rnd(0, 6) }));
+const SKYLINE = []; for (let x = 46; x < GX * C8;) { const w = irnd(3, 7); SKYLINE.push({ x, w, h: irnd(2, 7), c: irnd(0, 2) }); x += w; }
+function skyAt(h) {
+  const [sr, ss] = sunTimes();
+  const K = [[0, '#141a3c', '#262d5e'], [sr - 1, '#1b2350', '#3a3f78'], [sr, '#e88a6a', '#ffd59a'], [sr + 1.2, '#6fb8e6', '#bfe6f0'], [ss - 1.2, '#6fb8e6', '#c8e8ee'],
+    [ss, '#f08a5a', '#ffcf8a'], [ss + 0.8, '#5a4a8a', '#d07a7a'], [ss + 1.8, '#1b2350', '#3a3f78'], [24, '#141a3c', '#262d5e']];
+  let i = 0; while (i < K.length - 2 && h >= K[i + 1][0]) i++;
+  const a = K[i], b = K[i + 1], t = (h - a[0]) / Math.max(0.01, b[0] - a[0]);
+  let top = mixC(a[1], b[1], t), bot = mixC(a[2], b[2], t);
+  const grey = { sun: null, cloud: ['#8c96a8', 0.45], rain: ['#66707f', 0.6], snow: ['#b4bcc8', 0.5] }[weather];
+  if (grey) { top = mixC(top, grey[0], grey[1]); bot = mixC(bot, grey[0], grey[1] * 0.8); }
+  return [top, bot];
+}
+function drawWindows() {
+  const h = world.hour, night = 1 - daylight(h), [top, bot] = skyAt(h), [sr, ss] = sunTimes();
+  const sunT = (h - sr) / (ss - sr);
+  for (const win of WINDOWS) {
+    g.save(); g.beginPath(); g.rect(win.x, win.y, win.w, win.h); g.clip();
+    for (let r = 0; r < win.h; r++) R(win.x, win.y + r, win.w, 1, mixC(top, bot, r / (win.h - 1)));
+    if (night > 0.4 && (weather === 'sun')) for (const s of stars) { g.globalAlpha = (night - 0.4) * (0.5 + 0.5 * Math.sin(TIME * 2 + s.p)); P(s.x, s.y, '#fff8e0'); g.globalAlpha = 1; }
+    if (weather === 'sun' && sunT > 0 && sunT < 1) { const x = 46 + sunT * (GX * C8 - 46), y = -6 - Math.sin(Math.PI * sunT) * 9; R(x - 2, y - 1, 4, 2, '#fff3b0'); R(x - 1, y - 2, 2, 4, '#fff3b0'); }
+    const cc = weather === 'sun' ? mixC('#ffffff', '#5a6290', night) : weather === 'cloud' ? mixC('#d0d6e0', '#3a4060', night) : mixC('#9aa2b0', '#2a3048', night);
+    const nCl = weather === 'sun' ? 3 : clouds.length;
+    for (let k = 0; k < nCl; k++) { const c = clouds[k]; R(c.x, c.y + 2, c.w, 2, cc); R(c.x + 2, c.y, c.w - 5, 2, cc); }
+    const bcol = [mixC('#8fa0c4', '#1c2340', night), mixC('#7d8fb8', '#232a4c', night), mixC('#9aaccc', '#1a1f3a', night)];
+    for (const b of SKYLINE) {
+      if (b.x + b.w < win.x || b.x > win.x + win.w) continue;
+      const by = win.y + win.h - b.h;
+      R(b.x, by, b.w, b.h, weather === 'snow' ? mixC(bcol[b.c], '#e8eef4', 0.3) : bcol[b.c]);
+      if (night > 0.4) for (let yy = by + 1; yy < win.y + win.h; yy += 2) for (let xx = b.x + 1; xx < b.x + b.w - 1; xx += 2) if (hash(xx, yy) < 0.3) P(xx, yy, '#f5d76e');
+    }
+    if (weather === 'rain') for (let k = 0; k < 7; k++) R(win.x + ((k * 5 + TIME * 22) % win.w), win.y + ((k * 7 + TIME * 60) % win.h), 1, 2, 'rgba(210,225,255,0.7)');
+    if (weather === 'snow') for (let k = 0; k < 8; k++) P(win.x + ((k * 5 + Math.sin(TIME + k) * 2 + 40) % win.w), win.y + ((k * 7 + TIME * 6) % win.h), '#ffffff');
+    g.restore();
+    if (night < 0.95) lights.push({ x: win.x + win.w / 2, y: 6, r: 22, a: (1 - night) * 0.8 });
+  }
+}
+// live Eastern time (frozen only when ?hour= is used); the red second hand ticks so it reads as a real clock
+function drawClockHands() {
+  const h = world.hour, m = (h % 1) * 60, s = Math.floor((h * 3600) % 60);
+  const am = m / 60 * Math.PI * 2 - Math.PI / 2, ah = ((h % 12) + m / 60) / 12 * Math.PI * 2 - Math.PI / 2, as = s / 60 * Math.PI * 2 - Math.PI / 2;
+  line(CLOCK.x, CLOCK.y, CLOCK.x + Math.cos(ah) * 3, CLOCK.y + Math.sin(ah) * 3, '#2b2f3a');
+  line(CLOCK.x, CLOCK.y, CLOCK.x + Math.cos(am) * 5, CLOCK.y + Math.sin(am) * 5, '#2b2f3a');
+  line(CLOCK.x, CLOCK.y, CLOCK.x + Math.cos(as) * 5, CLOCK.y + Math.sin(as) * 5, '#d9453b');
+  P(CLOCK.x, CLOCK.y, '#d9453b');
+}
+
+// ---------------------------------------------------------------- furniture drawing (row by row for depth)
+function drawTableRow(t, r) {
+  const s = t.s, x = t.x0 * C8, w = (t.x1 - t.x0 + 1) * C8, y = r * C8, first = r === t.y0, last = r === t.y1;
+  R(x - 1, y - (first ? 1 : 0), w + 2, 8 + (first ? 1 : 0), OUT);
+  R(x, y, w, 8, s.top);
+  R(x, y, 1, 8, s.frame); R(x + w - 1, y, 1, 8, s.frame);
+  if (first) { R(x, y, w, 1, s.frame); R(x + 1, y + 1, w - 2, 1, '#ffffff'); }
+  if (t.mid) R(x + C8 + 2, y, C8 - 4, 8, shade(s.top, 0.96));
+  if (last) {
+    R(x - 1, y + 8, w + 2, 5, OUT); R(x, y + 8, w, 3, s.front); R(x, y + 8, w, 1, shade(s.front, 1.12));
+    R(x, y + 11, 2, 3, s.legs); R(x + w - 2, y + 11, 2, 3, s.legs); P(x - 1, y + 13, OUT); P(x + w, y + 13, OUT);
+  }
+}
+const screenMode = s => { const o = s.owner; if (!o || !o.present) return 'off'; if (!atDesk(o)) return 'lock'; return o.pose === 'call' ? 'crm' : 'code'; };
+const SCREEN = { off: '#141828', lock: '#22305a', code: '#1d2a4a', crm: '#dfe8f6' };
+const CODE_C = ['#7fe0b0', '#f7c06a', '#7fa6f0', '#f08a7a', '#c8d0e8'];
+const tri = (t, n) => n - Math.abs((t % (2 * n)) - n);
+const typingNow = w => ((TIME * 0.55 + w.i * 0.71) % 3) < 2.2;
+// monitor, keyboard and bits for one desk seat
+function drawSeatKit(s) {
+  const mode = screenMode(s), o = s.owner, blink = (TIME * 1.5 | 0) % 2;
+  if (s.kind === 'desk' && (s.face === 'right' || s.face === 'left')) {
+    const right = s.face === 'right', cx = (s.x + (right ? 1 : -1)) * C8, y = s.y * C8;
+    const mx = right ? cx + 4 : cx + 1, kx = right ? cx + 1 : cx + 5;
+    R(kx - 1, y + 1, 4, 7, OUT); R(kx, y + 2, 2, 5, '#d8dce4');
+    const sx = right ? mx : mx + 1;      // screen column faces the person
+    // [top, body height]: a normal monitor, or the product seat's two shorter ones with a gap between them, clear of the desk edge
+    for (const [top, h] of s.extraMon ? [[y - 8, 7], [y + 7, 7]] : [[y - 4, 9]]) {
+      const sh = h - 2, n = h === 9 ? 0 : (top > y ? 3 : 0);
+      R(mx - 1, top - 1, 5, h + 2, OUT); R(mx, top, 3, h, '#1e2130');
+      R(sx, top + 1, 2, sh, SCREEN[mode]);
+      if (mode === 'code') for (let k = 0; k < sh; k++) { const v = s.lines[(k + n) % 7]; if (v) P(sx + (k % 2), top + 1 + k, CODE_C[v]); }
+      else if (mode === 'crm') { R(sx, top + 1, 2, 1, '#3b6fd6'); P(sx + (Math.floor(TIME * 2) % 2), top + 3 + (Math.floor(TIME / 1.5 + n) % (sh - 2)), '#22b573'); }
+      else if (mode === 'lock') P(sx + (Math.floor(TIME * 2) % 2), top + 1 + Math.floor((TIME * 3) % sh), '#7fe0b0');
+      else P(right ? mx + 2 : mx, top + h - 2, blink ? '#f5b93a' : '#5a4a20');
+      R(mx, top + h + 1, 3, h === 9 ? 2 : 1, OUT); R(mx + 1, top + h + 1, 1, 1, '#1e2130');
+    }
+    if (mode !== 'off') lights.push({ x: right ? mx - 2 : mx + 4, y: y, r: 14, a: 0.85, c: mode === 'crm' ? '#c8d8ff' : '#6fa0ff' });
+    if ((s.x * 7 + s.y) % 3 === 0) { const mg = right ? cx + 1 : cx + 5; box(mg, y - 3, 2, 2, ['#d9453b', '#f1e9d6', '#3b6fd6'][s.y % 3]); }
+  } else if (s.face === 'up' && s.kind === 'desk') {   // L-desk corner: screen faces us over the person's shoulder
+    const x = s.x * C8, y = (s.y - 1) * C8;
+    R(x - 1, y - 5, 10, 9, OUT); R(x, y - 4, 8, 7, '#1e2130');
+    const sx = x + 1, sy = y - 3;
+    R(sx, sy, 6, 5, SCREEN[mode]);
+    if (mode === 'code') for (let k = 0; k < 5; k++) { if (s.lines[k]) R(sx + (k % 2), sy + k, 2 + s.lines[k], 1, CODE_C[s.lines[k]]); }
+    else if (mode === 'crm') { R(sx, sy, 6, 1, '#3b6fd6'); R(sx + 1, sy + 2 + (Math.floor(TIME / 1.5) % 3), 4, 1, '#22b573'); }
+    else if (mode === 'lock') R(sx + Math.round(tri(TIME * 2 + s.x, 4)), sy + Math.round(tri(TIME * 1.6, 3)), 2, 2, '#7fe0b0');
+    else P(x + 7, y + 2, blink ? '#f5b93a' : '#5a4a20');
+    R(x + 3, y + 3, 2, 2, '#1e2130'); R(x + 1, y + 5, 6, 1, '#d8dce4');
+    box((s.x + 1) * C8 + 2, y + 3, 3, 3, ['#d9453b', '#f1e9d6', '#3b6fd6'][s.x % 3]);   // mug on the corner
+    if (mode !== 'off') lights.push({ x: x + 4, y: y + 4, r: 16, a: 0.85, c: mode === 'crm' ? '#c8d8ff' : '#6fa0ff' });
+  } else if (s.face === 'down' && s.kind === 'desk') {   // office desk: monitor back beside the person, keyboard in front
+    const y = (s.y + 1) * C8, mx = s.monX * C8;
+    R(s.x * C8, y + 1, 7, 2, '#d8dce4'); R(s.x * C8 - 1, y, 9, 4, 'rgba(26,28,58,0.0)');
+    box(mx + 1, y - 5, 6, 6, '#2a2f3a'); R(mx + 3, y + 1, 2, 2, '#2a2f3a');
+    P(mx + 6, y - 4, mode === 'off' ? (blink ? '#f5b93a' : '#5a4a20') : '#7fe0b0');
+    if (mode !== 'off') lights.push({ x: s.x * C8 + 4, y: y - 6, r: 14, a: 0.85, c: '#6fa0ff' });
+    if (o && o.present && atDesk(o) && o.pose !== 'call') {
+      const f = o.pose === 'type' && typingNow(o) ? (TIME * 9 + o.i | 0) % 2 : 0;
+      R(s.x * C8 + 1, y + 1 + f, 2, 1, o.frames.skin); R(s.x * C8 + 5, y + 2 - f, 2, 1, o.frames.skin);
+    }
+  }
+  // things on the table at meetings and lunch
+  if ((s.kind === 'meet' || s.kind === 'lunch') && s.occ) {
+    const off = { right: [1, 0], left: [-1, 0], down: [0, 1], up: [0, -1] }[s.face];
+    const px = (s.x + off[0]) * C8 + 2, py = (s.y + off[1]) * C8 + 2;
+    if (s.kind === 'lunch') { box(px, py, 4, 3, '#ffffff'); R(px + 1, py + 1, 2, 1, ['#e9a23a', '#7fd06a', '#d9453b'][s.y % 3]); }
+    else { box(px, py, 4, 3, '#9aa4b0'); R(px, py, 4, 1, '#c8ccd2'); }
+  }
+}
+function drawChair(s) {
+  const x = s.x * C8, y = s.y * C8, c = s.chair, d = shade(c, 0.78), base = s.kind === 'desk' ? '#3a3f4a' : '#d8d8d2';
+  if (s.stool) {     // bar stool: round seat on a tall post with a foot ring
+    R(x, y + 2, 8, 4, OUT); R(x + 1, y + 3, 6, 2, '#3a3f4a'); R(x + 1, y + 3, 6, 1, '#55608a');
+    R(x + 3, y + 6, 2, 2, '#9aa4b0'); R(x + 1, y + 7, 6, 1, '#9aa4b0');
+    return;
+  }
+  if (s.face === 'right' || s.face === 'left') {
+    const right = s.face === 'right', bx = right ? x : x + 6;
+    R(bx - 1, y - 3, 4, 10, OUT); R(bx, y - 2, 2, 8, c);
+    R(x - 1, y + 3, 10, 4, OUT); R(x, y + 4, 8, 2, c); R(x, y + 5, 8, 1, d);
+    R(x + 3, y + 6, 2, 1, base); R(x + 1, y + 7, 6, 1, base);
+  } else if (s.face === 'down') { box(x, y - 5, 8, 7, c); R(x, y + 1, 8, 1, d); }
+  else { box(x, y + 2, 8, 5, c); R(x, y + 2, 8, 1, shade(c, 1.08)); R(x + 3, y + 7, 2, 1, base); }
+}
+function drawProp(p) {
+  const [k, gx, gy, w, h] = p, x = gx * C8, y = gy * C8, bottom = (gy + h) * C8;
+  switch (k) {
+    case 'post': blit(SPR.post, x + 1, bottom - 22); break;
+    case 'coat': blit(SPR.coat, x, bottom - 18); break;
+    case 'shelf': blit(SPR.shelf, x, bottom - 18); break;
+    case 'cabinets': blit(SPR.cabinets, x, bottom - 34); break;
+    case 'sidetable': {   // round wicker side table with a little plant-free book stack
+      R(x + 3, y - 1, 10, 9, OUT); R(x + 2, y, 12, 7, OUT);
+      R(x + 4, y, 8, 7, '#d8c49a'); R(x + 3, y + 1, 10, 5, '#d8c49a'); R(x + 4, y + 1, 8, 1, '#e8d8b0');
+      for (let i = 0; i < 4; i++) R(x + 4 + i * 2, y + 3, 1, 3, '#b8a070');
+      R(x + 6, y - 2, 5, 2, '#3b6fd6'); R(x + 6, y - 3, 4, 1, '#f1e9d6');
+      break;
+    }
+    case 'cooler': {
+      blit(SPR.cooler, x, bottom - 20);
+      if (spotUser('water', 0)) for (let k = 0; k < 3; k++) { const ph = (TIME * 1.5 + k * 0.33) % 1; P(x + 2 + k, bottom - 14 - ph * 5, '#ffffff'); }
+      break;
+    }
+    case 'island': blit(SPR.island, x, y); break;
+    case 'counterV': {
+      const top = y - 2;
+      blit(SPR.counterV, x, top);
+      if (spotUser('micro', 0)) { R(x + 1, top + 2, 4, 4, (TIME * 4 | 0) % 2 ? '#f5d76e' : '#e8b84e'); lights.push({ x: x + 4, y: top + 4, r: 10, a: 0.7, c: '#ffe08a' }); }
+      if (spotUser('sink', 0) || spotUser('sink', 1)) { const f = (TIME * 8 | 0) % 2; P(x + 2, top + 22 + f, '#bfe6ff'); P(x + 3, top + 24, '#bfe6ff'); P(x + 2, top + 26 - f, '#bfe6ff'); }
+      break;
+    }
+    case 'coffee': {
+      blit(SPR.coffee, x, bottom - 18);
+      if (spotUser('coffee', 0) || spotUser('coffee', 1)) {
+        box(x + 6, bottom - 11, 3, 2, '#f6f8fb');
+        for (let j = 0; j < 2; j++) { const ph = (TIME * 1.2 + j * 0.5) % 1; g.globalAlpha = 1 - ph; P(x + 7 + j, bottom - 13 - ph * 6, '#ffffff'); g.globalAlpha = 1; }
+      }
+      break;
+    }
+    case 'fridge': {
+      blit(SPR.fridge, x, bottom - 24);
+      if (spotUser('fridge', 0)) { R(x + 1, y - 7, 11, 14, '#fff6c8'); R(x + 1, y - 2, 11, 1, '#d8d0a0'); R(x + 3, y - 5, 2, 3, '#d9453b'); R(x + 7, y, 3, 3, '#22b573'); lights.push({ x: x + 7, y, r: 12, a: 0.8, c: '#fff0b0' }); }
+      break;
+    }
+    case 'credenza': {
+      R(x - 1, y + 1, w * C8 + 2, 8, OUT); R(x, y + 2, w * C8, 3, '#f2f2ee'); R(x, y + 5, w * C8, 3, '#dcdcd6');
+      for (let i = 0; i < w; i++) { R(x + i * C8 + 3, y + 6, 2, 1, '#9aa4b0'); if ((gx + i) % 2) R(x + i * C8 + 1, y, 5, 2, ['#3b6fd6', '#d9453b', '#e9c46a'][i % 3]); }
+      break;
+    }
+    case 'bookcase': {   // seen from above against the bottom wall: white tops, unit seams, a few things on top
+      const cw = w * C8, top = bottom - 5;   // shallow: half the depth of a cell-and-a-bit
+      R(x - 1, top - 1, cw + 2, 6, OUT); R(x, top, cw, 5, '#f2f2ee'); R(x, top, cw, 1, '#ffffff'); R(x, bottom - 1, cw, 1, '#e2e2dc');
+      for (let px = x + 16; px < x + cw; px += 16) R(px, top + 1, 1, 4, '#d0d0ca');
+      for (let k = 0; k < w; k += 3) { const h = hash(gx + k, 27); if (h < 0.5) R(x + k * C8 + 3, top + 1, 4, 2, ['#c8b48a', '#3b6fd6', '#f1e9d6', '#9aa4b0'][(h * 8 | 0) % 4]); }
+      break;
+    }
+    case 'silver': {    // big square brushed-metal storage unit: lid on top, two doors on the front
+      const cw = w * C8, top = y + 2, face = bottom - 9;
+      R(x - 1, top - 1, cw + 2, bottom - top + 2, OUT);
+      R(x, top, cw, face - top, '#d6dbe2'); R(x, top, cw, 1, '#eef1f5');
+      for (let yy = top + 3; yy < face - 1; yy += 3) R(x + 1, yy, cw - 2, 1, '#c6ccd4');   // brushed lid
+      R(x, face, cw, 1, '#8c939d'); R(x, face + 1, cw, bottom - face - 1, '#b3bac4');
+      R(x + cw / 2, face + 1, 1, bottom - face - 1, '#8c939d');
+      R(x + cw / 2 - 3, face + 3, 1, 3, '#6b727c'); R(x + cw / 2 + 3, face + 3, 1, 3, '#6b727c');   // handles
+      R(x + 1, bottom - 1, cw - 2, 1, '#8c939d');
+      break;
+    }
+    case 'storage': {   // black storage cabinet against the wall
+      const top = bottom - 18, cw = w * C8;
+      R(x - 1, top - 1, cw + 2, 19, OUT); R(x, top, cw, 17, '#2a2d36'); R(x, top, cw, 1, '#4a4f5c'); R(x, top + 4, cw, 1, '#1e2028');
+      R(x + cw / 2, top + 5, 1, 12, '#1e2028'); R(x + cw / 2 - 2, top + 9, 1, 3, '#9aa4b0'); R(x + cw / 2 + 2, top + 9, 1, 3, '#9aa4b0');
+      R(x + 2, top + 1, 5, 2, '#c8b48a'); R(x + 9, top + 1, 4, 2, '#3b6fd6');   // boxes on top
+      break;
+    }
+    case 'rack': {   // thin dark grey metal shelf rack between pillars: acts like a low wall
+      const x1 = x + w * C8, top = bottom - 14;
+      R(x - 1, top - 1, w * C8 + 2, 15, OUT); R(x, top, w * C8, 13, '#4a4f5a');
+      for (const sy of [top + 4, top + 9]) R(x, sy, w * C8, 1, '#6b717e');
+      for (let px = x; px < x1; px += 3) {
+        const h1 = hash(px, 1), h2 = hash(px, 2);
+        if (h1 < 0.55) R(px, top + 1, 2, 3, ['#3b6fd6', '#d9453b', '#e9c46a', '#f1e9d6', '#2f9a8a', '#c8b48a'][(h1 * 60 | 0) % 6]);
+        if (h2 < 0.5) R(px, top + 6, 2, 3, ['#c8b48a', '#f1e9d6', '#9aa4b0', '#ec8f2b', '#3a3f55'][(h2 * 50 | 0) % 5]);
+      }
+      for (let px = x; px <= x1 - 1; px += 24) R(px, top, 1, 13, '#6b717e');
+      R(x, bottom - 1, w * C8, 1, '#2f333c');
+      break;
+    }
+  }
+}
+// solid office wall along row 8 with sliding patio-style glass double doors (they slide open as people come near)
+const doorOpen = GLASS_DOORS.map(() => 0);
+function drawWall() {
+  const y = 8 * C8;
+  const seg = (x0, x1) => {
+    R(x0, y - 8, x1 - x0, 15, OUT);
+    R(x0, y - 7, x1 - x0, 2, '#d8d4cc'); R(x0, y - 5, x1 - x0, 9, '#f2efe8'); R(x0, y + 4, x1 - x0, 2, '#c8c2b6');
+  };
+  let x = 48;
+  GLASS_DOORS.forEach(([a, b], i) => {
+    const dx = a * C8, dw = (b - a + 1) * C8, half = dw / 2;
+    if (dx > x) seg(x, dx);
+    const o = doorOpen[i], pw = Math.round(half - o * (half - 4));   // each pane slides behind the wall
+    R(dx - 1, y - 8, dw + 2, 15, '#2b2f3a');
+    R(dx, y - 7, dw, 13, '#c8a87a');                     // floor showing through the doorway
+    g.fillStyle = 'rgba(205,238,250,0.55)';
+    g.fillRect(dx, y - 7, pw, 13); g.fillRect(dx + dw - pw, y - 7, pw, 13);
+    R(dx + pw - 1, y - 7, 1, 13, '#2b2f3a'); R(dx + dw - pw, y - 7, 1, 13, '#2b2f3a');
+    if (pw > 2) { R(dx + pw - 3, y - 2, 1, 3, '#9aa4b0'); R(dx + dw - pw + 2, y - 2, 1, 3, '#9aa4b0'); }   // handles
+    g.fillStyle = 'rgba(255,255,255,0.55)';                                                              // glare
+    if (pw > 6) { g.fillRect(dx + 3, y - 2, 1, 3); g.fillRect(dx + 4, y - 5, 1, 3); g.fillRect(dx + dw - 6, y - 3, 1, 3); g.fillRect(dx + dw - 5, y - 6, 1, 3); }
+    R(dx, y + 5, dw, 1, '#3a3f4a');
+    x = (b + 1) * C8;
+  });
+  if (x < GX * C8) seg(x, GX * C8);
+}
+
+// ---------------------------------------------------------------- people drawing
+function drawPerson(w) {
+  if (w.hidden) return;
+  const X = Math.round(w.px), Y = Math.round(w.py), F = w.frames, sx = X - 2;
+  let c, sy, view;
+  if (w.seated) {
+    const s = w.sitAt, busy = (w.pose === 'type' && typingNow(w)) || w.pose === 'eat';
+    const f = busy ? ((TIME * (w.pose === 'eat' ? 2 : 9) + w.i) | 0) % 2 : 0;
+    if (s.face === 'right' || s.face === 'left') { c = F[(s.face === 'right' ? 'sitRight' : 'sitLeft') + (f ? 'B' : 'A')]; sy = Y - 7; view = s.face; }
+    else if (s.face === 'down') { c = F.sitDown; sy = Y - 3; view = 'down'; }
+    else { c = f ? F.sitUpB : F.sitUpA; sy = Y - 5; view = 'up'; }
+  } else {
+    let k = w.pose === 'walk' ? ['', 'A', '', 'B'][Math.floor(w.walkT * 7) % 4] : '';
+    if ((w.dir === 'left' || w.dir === 'right') && k === 'B') k = 'A';
+    c = F[w.dir + k]; sy = Y - 8; view = w.dir;
+  }
+  blit(c, sx, sy);
+  w.headX = sx + 6; w.headTop = sy + 1;
+  if (w.headset) drawHeadset(sx, sy + 1, view);
+}
+function drawHeadset(sx, ht, view) {
+  const B = '#2a2238', M = '#55608a';
+  if (view === 'right' || view === 'left') {
+    const fx = x => view === 'right' ? sx + x : sx + 11 - x;
+    for (let j = 0; j < 4; j++) P(fx(5), ht + j, B);
+    R(Math.min(fx(4), fx(5)), ht + 4, 2, 2, B);
+    for (let i = 6; i <= 9; i++) P(fx(i), ht + 6, M);
+    P(fx(10), ht + 6, '#d9453b');
+  } else {
+    R(sx + 2, ht, 8, 1, B); R(sx, ht + 4, 2, 2, B); R(sx + 10, ht + 4, 2, 2, B);
+    if (view === 'down') { P(sx + 10, ht + 6, M); P(sx + 9, ht + 7, M); P(sx + 8, ht + 7, '#d9453b'); }
+  }
+}
+function drawBubble(w) {
+  const b = w.bubble, ic = ICONS[b.icon] || ICONS.dots;
+  const bx = Math.round(w.headX - 6), by = Math.round(w.headTop - 13);
+  R(bx + 1, by, 10, 1, OUT); R(bx + 1, by + 9, 10, 1, OUT); R(bx, by + 1, 1, 8, OUT); R(bx + 11, by + 1, 1, 8, OUT);
+  R(bx + 1, by + 1, 10, 8, '#ffffff'); R(bx + 1, by + 8, 10, 1, '#dfe4ee');
+  R(bx + 5, by + 9, 2, 1, '#ffffff'); P(bx + 4, by + 10, OUT); P(bx + 5, by + 10, '#ffffff'); P(bx + 6, by + 10, OUT); P(bx + 5, by + 11, OUT);
+  const rows = b.icon === 'dots' ? [0, 0, [0, 16, 20, 21][1 + (TIME * 3 | 0) % 3], 0, 0] : ic.r;
+  g.fillStyle = ic.c;
+  for (let j = 0; j < 5; j++) for (let i = 0; i < 5; i++) if (rows[j] & (16 >> i)) g.fillRect(bx + 3 + i, by + 2 + j, 1, 1);
+}
+function drawRoomba() {
+  const x = Math.round(roomba.px), y = Math.round(roomba.py) + 1, on = !(roomba.tx === DOCK.x && roomba.ty === DOCK.y);
+  R(x, y - 1, 8, 8, OUT); R(x - 1, y, 10, 6, OUT); R(x, y, 8, 6, '#3a3f55'); R(x + 1, y - 0, 6, 6, '#3a3f55'); R(x + 2, y + 1, 4, 3, '#55608a');
+  P(x + 4, y, on ? ((TIME * 3 | 0) % 2 ? '#7fe0b0' : '#2f9a6a') : '#f5b93a');
+  if (on) lights.push({ x: x + 4, y: y + 3, r: 6, a: 0.6, c: '#7fe0b0' });
+}
+
+// ---------------------------------------------------------------- lighting
+let lights = [];
+const lc = { c: null, x: null };
+function lighting() {
+  const day = daylight(world.hour), occupied = workers.some(w => w.present);
+  const gloom = weather === 'sun' ? 0 : weather === 'cloud' ? 0.08 : 0.14;
+  const outDark = Math.min(0.85, 0.72 * (1 - day) + gloom * day);
+  const inDark = occupied ? 0 : Math.min(0.85, 0.06 + 0.72 * (1 - day));   // office lights follow occupancy
+  if (outDark < 0.01 && inDark < 0.01) return;
+  const L = lc.x;
+  L.globalCompositeOperation = 'source-over'; L.setTransform(1, 0, 0, 1, 0, 0);
+  L.clearRect(0, 0, VW, VH);
+  L.fillStyle = `rgba(10,12,40,${outDark})`; L.fillRect(0, 0, VW, VH);
+  const indoor = [[OX + 45, OY - 22, GX * C8 - 42, GY * C8 + 26], [0, OY + 24 * C8 - 11, OX + 48, 4 * C8 + 15]];   // our office + the hallway
+  for (const r of indoor) L.clearRect(...r);
+  L.fillStyle = `rgba(10,12,40,${inDark})`;
+  for (const r of indoor) L.fillRect(...r);
+  L.globalCompositeOperation = 'destination-out';
+  L.translate(OX, OY);
+  for (const l of lights) {
+    const gr = L.createRadialGradient(l.x, l.y, 0, l.x, l.y, l.r);
+    gr.addColorStop(0, `rgba(0,0,0,${l.a})`); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    L.fillStyle = gr; L.fillRect(l.x - l.r, l.y - l.r, l.r * 2, l.r * 2);
+  }
+  g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(lc.c, 0, 0); g.restore();
+  if (Math.max(outDark, inDark) > 0.25) {
+    g.globalCompositeOperation = 'lighter';
+    for (const l of lights) if (l.c) {
+      const [r, gg, b] = hex(l.c), gr = g.createRadialGradient(l.x, l.y, 0, l.x, l.y, l.r * 0.8);
+      gr.addColorStop(0, `rgba(${r},${gg},${b},0.14)`); gr.addColorStop(1, `rgba(${r},${gg},${b},0)`);
+      g.fillStyle = gr; g.fillRect(l.x - l.r, l.y - l.r, l.r * 2, l.r * 2);
+    }
+    g.globalCompositeOperation = 'source-over';
+  }
+}
+
+// ---------------------------------------------------------------- sales one-liners (same as GM yard)
+// Every so often someone says one line. Drawn on the screen canvas with a system font so it stays crisp at any scale.
+const PHRASES = [
+  'Another day in paradise!',
+  'Smiling and dialing!',
+  'Making magic happen!',
+  'Just out here changing lives... one tree at a time.',
+  'Fueling the machine.',
+  "If I were doing any better, it'd be illegal.",
+  "Chasing the dream... it's fast, but I'm trying.",
+  'Training the algorithm on human rejection.',
+  'Just an organic chatbot seeking a human connection.',
+];
+const CHAT = params.get('chat') !== '0';
+let speech = null, chatT = rnd(15, 40), lastPhrase = -1;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+function sayRandom() {
+  const cands = workers.filter(w => w.present && !w.hidden && w.px >= 0 && w.talk > 0);   // plant buyers talk the most, interns never
+  if (!cands.length) return false;
+  let i; do i = Math.floor(rand() * PHRASES.length); while (i === lastPhrase && PHRASES.length > 1);
+  lastPhrase = i;
+  const w = weighted(cands.map(c => [c, c.talk])), text = PHRASES[i];
+  w.bubble = null;
+  speech = { w, text, t: 0, life: 4 + text.length * 0.07 };
+  return true;
+}
+function updateSpeech(dt) {
+  if (speech) { speech.t += dt; if (speech.t >= speech.life || !speech.w.present || speech.w.hidden) speech = null; return; }
+  if (CHAT && (chatT -= dt) <= 0) chatT = sayRandom() ? rnd(60, 150) : rnd(5, 10);   // about one line every 1-2.5 min
+}
+function wrapText(c, text, maxW) {
+  const lines = []; let cur = '';
+  for (const word of text.split(' ')) { const t = cur ? cur + ' ' + word : word; if (cur && c.measureText(t).width > maxW) { lines.push(cur); cur = word; } else cur = t; }
+  if (cur) lines.push(cur);
+  return lines;
+}
+function drawSpeech() {
+  const s = speech; if (!s) return;
+  const c = mctx, hx = (OX + s.w.headX) * scale, hy = (OY + s.w.headTop - 1) * scale;
+  const fs = clamp(Math.round(scale * 3.2), 14, 26);
+  c.save(); c.setTransform(1, 0, 0, 1, 0, 0);
+  c.font = `600 ${fs}px "Segoe UI", system-ui, -apple-system, sans-serif`; c.textBaseline = 'top';
+  const lines = wrapText(c, s.text, fs * 12), lh = Math.round(fs * 1.25), padX = Math.round(fs * 0.7), padY = Math.round(fs * 0.45);
+  const tw = Math.ceil(Math.max(...lines.map(l => c.measureText(l).width)));
+  const bw = tw + padX * 2, bh = lines.length * lh + padY * 2, tail = Math.round(fs * 0.6);
+  const bx = Math.round(clamp(hx - bw / 2, 6, cv.width - bw - 6)), by = Math.round(Math.max(6, hy - tail - bh));
+  const a = Math.min(1, s.t / 0.25, (s.life - s.t) / 0.5), pop = s.t < 0.25 ? 0.85 + 0.15 * (s.t / 0.25) : 1;
+  c.globalAlpha = clamp(a, 0, 1);
+  c.translate(hx, hy); c.scale(pop, pop); c.translate(-hx, -hy);
+  const ol = Math.max(2, Math.round(scale / 2.5)), st = Math.max(2, Math.round(scale / 1.6));
+  const tx = Math.round(clamp(hx, bx + st + tail, bx + bw - st - tail));
+  const body = (grow, col) => {   // pixel-style box with notched corners + a stepped tail down to the speaker
+    c.fillStyle = col;
+    c.fillRect(bx - grow + st, by - grow, bw + grow * 2 - st * 2, bh + grow * 2);
+    c.fillRect(bx - grow, by - grow + st, bw + grow * 2, bh + grow * 2 - st * 2);
+    c.fillRect(tx - tail / 2 - grow, by + bh, tail + grow * 2, Math.round(tail * 0.5) + grow);
+    c.fillRect(tx - tail / 4 - grow, by + bh + Math.round(tail * 0.5), tail / 2 + grow * 2, Math.round(tail * 0.5) + grow);
+  };
+  body(ol, '#0b1020'); body(0, '#fffdf5');
+  c.fillStyle = 'rgba(0,0,0,0.08)'; c.fillRect(bx + st, by + bh - ol, bw - st * 2, ol);
+  c.fillStyle = '#0f172a';
+  lines.forEach((l, i) => c.fillText(l, bx + padX, by + padY + i * lh + Math.round(fs * 0.05)));
+  c.restore();
+}
+
+// ---------------------------------------------------------------- frame
+const cv = document.getElementById('c'), mctx = cv.getContext('2d');
+let view = null, vctx = null, scale = 1, vig = null;
+const NEED_W = GX * C8 + 30, NEED_H = GY * C8 + 46;
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr);
+  const fit = Math.min(cv.width / NEED_W, cv.height / NEED_H);
+  scale = params.has('scale') ? parseFloat(params.get('scale')) : fit < 1 ? fit : (Math.floor(fit) / fit >= 0.85 ? Math.floor(fit) : fit);
+  VW = Math.ceil(cv.width / scale); VH = Math.ceil(cv.height / scale);
+  OX = Math.floor((VW - GX * C8) / 2); OY = Math.floor((VH - GY * C8) / 2) + 10;
+  view = canvas(VW, VH); vctx = view.getContext('2d');
+  lc.c = canvas(VW, VH); lc.x = lc.c.getContext('2d');
+  exteriorDirty = true;
+  const cx = cv.width / 2, cy = cv.height / 2;
+  vig = mctx.createRadialGradient(cx, cy, Math.min(cv.width, cv.height) * 0.35, cx, cy, Math.max(cv.width, cv.height) * 0.7);
+  vig.addColorStop(0, 'rgba(10,8,30,0)'); vig.addColorStop(1, 'rgba(10,8,30,0.35)');
+}
+let STATIC = [];
+function buildDrawables() {
+  STATIC = [];
+  for (const t of TABLES) for (let r = t.y0; r <= t.y1; r++) STATIC.push({ key: (r + 1) * C8 - 0.3, draw: () => drawTableRow(t, r) });
+  for (const s of SEATS) {
+    const ky = s.face === 'down' && s.kind === 'desk' ? s.y + 2 : s.face === 'up' ? s.y : s.face === 'down' ? s.y + 2 : s.y + 1;
+    STATIC.push({ key: (s.extraMon ? ky + 1 : ky) * C8 - 0.1, draw: () => drawSeatKit(s) });   // the second (lower) monitor reaches into the next desk row
+    STATIC.push({ key: (s.y + 1) * C8 + (s.face === 'up' ? 0.6 : 0.4), draw: () => drawChair(s) });
+  }
+  for (const p of PROPS) STATIC.push({ key: (p[2] + p[4]) * C8 - 0.3, draw: () => drawProp(p) });
+  STATIC.push({ key: 9 * C8 - 0.2, draw: drawWall });
+}
+function render() {
+  lights = [];
+  if (exteriorDirty) buildExterior();
+  g = vctx; g.setTransform(1, 0, 0, 1, 0, 0); g.imageSmoothingEnabled = false;
+  g.drawImage(ext, 0, 0);
+  const alley = Math.max(0, OY - 22);
+  if ((weather === 'cloud' || weather === 'rain') && alley > 0) {   // cloud shadows drifting over the alley
+    g.save(); g.beginPath(); g.rect(0, 0, VW, alley - 1); g.clip();
+    g.fillStyle = 'rgba(20,24,50,0.10)';
+    for (const s of shadows) { const x = s.x * (VW + 160) - 80, y = s.y * alley; g.beginPath(); g.ellipse(x, y, s.r * 1.6, s.r * 0.7, 0, 0, Math.PI * 2); g.fill(); }
+    g.restore();
+  }
+  g.translate(OX, OY);
+  g.drawImage(bg, -BGX, -BGY);
+  drawWindows();
+  g.drawImage(wallFG, -BGX, -BGY);
+  drawClockHands();
+  for (const d of ROOM_DOORS) { const busy = d.kind === 'wc' && SPOTS.wc.spots.some(s => s.door === d.x && s.using && s.using.hidden); P(d.x * C8 + 6, 21 * C8 + 4, busy ? '#d9453b' : '#22b573'); }
+  const list = STATIC.slice();
+  for (const w of workers) if (w.present) list.push({ key: w.py + C8 + 0.5, draw: () => drawPerson(w) });
+  list.push({ key: roomba.py + 4, draw: drawRoomba });
+  for (const d of dogs) if (d.present) list.push({ key: d.py + C8 + 0.45, draw: () => drawDog(d) });
+  list.sort((a, b) => a.key - b.key);
+  for (const it of list) it.draw();
+  // weather over the outdoor alley only (it falls a little past the roof edge onto it)
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  if (alley > 2) {
+    const n = Math.ceil(drops.length * Math.min(1, alley / 60));
+    if (weather === 'rain') {
+      g.fillStyle = 'rgba(200,215,240,0.6)';
+      for (let k = 0; k < n; k++) { const d = drops[k], x = d.x * VW, y = d.y * (alley + 3) - 3; if (outdoors(y + 3)) g.fillRect(x | 0, y | 0, 1, 3); }
+      g.fillStyle = 'rgba(220,230,250,0.55)';
+      for (let k = 0; k < 10; k++) { const x = hash(k, Math.floor(TIME * 3)) * VW, y = hash(k + 50, Math.floor(TIME * 3)) * (alley - 2); g.fillRect(x - 1, y, 3, 1); }
+    } else if (weather === 'snow') {
+      g.fillStyle = '#ffffff';
+      for (let k = 0; k < Math.min(n, flakes.length); k++) { const f = flakes[k], x = (f.x * VW + Math.sin(TIME + f.p) * 3 + VW) % VW, y = f.y * alley; if (outdoors(y + f.s)) g.fillRect(x | 0, y | 0, f.s, f.s); }
+    }
+  }
+  // alley lamps
+  const night = 1 - daylight(world.hour);
+  g.translate(OX, OY);
+  if (night > 0.2) for (const [x, y] of lampPositions()) lights.push({ x: x - OX, y: y - OY, r: 30, a: 0.75, c: '#ffd890' });
+  lighting();
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  // to the screen, then the lo-fi grade
+  mctx.imageSmoothingEnabled = false;
+  mctx.drawImage(view, 0, 0, VW * scale, VH * scale);
+  if (LOFI) {
+    mctx.globalCompositeOperation = 'soft-light'; mctx.fillStyle = 'rgba(255,176,110,0.20)'; mctx.fillRect(0, 0, cv.width, cv.height);
+    mctx.globalCompositeOperation = 'source-over'; mctx.fillStyle = vig; mctx.fillRect(0, 0, cv.width, cv.height);
+  }
+  drawSpeech();
+}
+function updateAmbient(dt) {
+  for (const c of clouds) { c.x += c.v * dt; if (c.x > GX * C8 + 4) { c.x = 30 - c.w - rnd(0, 30); c.y = rnd(-17, -11); } }
+  for (const s of shadows) { s.x += s.v * dt / (VW + 160); if (s.x > 1) { s.x = 0; s.y = rand(); } }
+  for (const d of drops) { d.y += d.v * dt * 1.6; d.x -= d.v * dt * 0.25; if (d.y > 1) { d.y -= 1; d.x = rand(); } if (d.x < 0) d.x += 1; }
+  for (const f of flakes) { f.y += f.v * dt * 0.12; if (f.y > 1) { f.y -= 1; f.x = rand(); } }
+  for (const s of deskSeats) {
+    const o = s.owner;
+    if (o && o.present && atDesk(o) && o.pose === 'type' && typingNow(o) && chance(dt * 4)) { s.lines.shift(); s.lines.push(irnd(0, 4)); }
+  }
+  // background chatter: meetings, island, lunch table
+  const talk = (group, icons, p) => { if (group.length > 1 && chance(dt * p)) { const w = pick(group); if (!w.bubble) say(w, weighted(icons), 1.6); } };
+  if (meeting) talk(meeting.members.filter(m => m.sitAt && m.sitAt.kind === 'meet'), MEET_ICONS, 0.6);  talk(SPOTS.island.spots.map(s => s.using).filter(Boolean), CHAT_ICONS, 0.4);
+  talk(LUNCH_SEATS.map(s => s.occ).filter(Boolean), CHAT_ICONS.concat([['food', 2]]), 0.35);
+  if (meeting && TIME > meeting.end + 90) meeting = null;
+  GLASS_DOORS.forEach(([a, b], i) => {   // sliding doors open when someone (or a dog) is close
+    const near = workers.concat(dogs).some(e => e.present && !e.hidden && e.px >= a * C8 - 8 && e.px <= b * C8 + 8 && e.py >= 6 * C8 && e.py <= 10 * C8);
+    doorOpen[i] += ((near ? 1 : 0) - doorOpen[i]) * Math.min(1, dt * 6);
+  });
+  if (world.hour < 11) for (const w of workers) w.lunchDone = false;
+}
+function step(dt) {
+  DT = dt; TIME += dt;
+  world.hour = hourNow();
+  for (const c of cos) c.tick();
+  for (const w of workers) if (w.bubble && (w.bubble.t -= dt) <= 0) w.bubble = null;
+  for (const d of dogs) {
+    if (d.bubble && (d.bubble.t -= dt) <= 0) d.bubble = null;
+  }
+  updateAmbient(dt);
+  updateSpeech(dt);
+}
+
+// ---------------------------------------------------------------- boot
+buildSprites();
+buildLayers();
+buildDrawables();
+for (const w of workers) if (wantPresent(w)) { w.present = true; sit(w, w.home); }   // already at work when the page opens
+const cos = [...workers.map(w => new Co(() => life(w))), new Co(roombaLife), new Co(() => dogLife(dogs[0], dogs[1])), new Co(() => dogLife(dogs[1], dogs[0]))];
+if (params.get('dogs') === '1') dogs.forEach(d => { d.follow = true; });   // preview: both poodles come in right away
+resize();
+addEventListener('resize', resize);
+addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (k === 'n') forcedHour = 22;
+  else if (k === 'd') forcedHour = 10.5;
+  else if (k === 'c') forcedHour = null;
+  else if (k === 'b') { speech = null; sayRandom(); }
+  else if (k === 'w') { weather = WEATHERS[(WEATHERS.indexOf(weather) + 1) % 4]; exteriorDirty = true; }
+  else if (k === 'f') { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); }
+});
+fetchWeather(); setInterval(fetchWeather, 15 * 60 * 1000);
+setInterval(() => { MONTH = zoneNow().month || MONTH; }, 3600 * 1000);
+setInterval(pickRoster, 60 * 1000);   // new day: a new set of people comes in
+let last = performance.now(), acc = 0;
+const STEP = 1 / FPS;
+function frame(now) {
+  requestAnimationFrame(frame);
+  let dt = (now - last) / 1000; last = now;
+  if (document.hidden) return;
+  if (dt > 0.25) dt = 0.25;
+  acc += dt;
+  if (acc < STEP) return;
+  const s = Math.min(acc, 0.12); acc = 0;
+  step(s);
+  render();
+}
+requestAnimationFrame(frame);
+document.addEventListener('visibilitychange', () => { last = performance.now(); acc = 0; });
+</script>
+</body>
+</html>
