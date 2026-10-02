@@ -2049,8 +2049,9 @@ function step(dt) {
 // ---------------------------------------------------------------- manual control (?user=2372)
 // Open the page with your user id and you drive your own character with the keyboard. Every step goes through
 // the GM Office relay (a Cloudflare Worker, relay/ in this repo) to every other open page, the office TV
-// included, so your character walks there too. Close the tab (or leave it in the background for a minute) and
-// your character goes back to its normal routine. Only ids in KNOWN work; any other id is just the normal page.
+// included, so your character walks there too. Not in the office today (a Monday, say)? Your character walks in
+// from the hallway and on to your desk. Close the tab (or leave it in the background for a minute) and your
+// character goes back to its normal routine, or says bye and walks out if it's not their day / hours. Only ids in KNOWN work; any other id is just the normal page.
 const RELAY_URL = params.get('relay') === '0' ? null : (params.get('relay') || 'wss://gm-office-relay.tj-c25.workers.dev/ws');
 const MANUAL_WALK = 48;   // px per second when driven: a bit brisker than the idle stroll
 const DIRV = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
@@ -2063,7 +2064,7 @@ const USER_ID = (params.get('user') || ([...params.keys()].find(k => /^user_\d+$
 const MY = (() => { const hit = USER_ID && workerOf_(USER_ID); return hit ? { uid: String(hit[1].uid), w: hit[0], v: hit[1] } : null; })();
 const seatAt_ = (x, y) => SEATS.find(s => s.x === x && s.y === y);
 // Stop whatever they were doing and hand them to the keyboard (local) or the relay (someone else's page).
-function takeOver_(w, v, local) {
+function takeOver_(w, v, local, row) {
   if (w.ctl) return w.ctl;
   if (v && w.v !== v) { w.v = v; w.look = v.look; w.frames = v.frames; }   // shared seat: it's their turn now
   for (const k in SPOTS) for (const s of SPOTS[k].spots) { if (s.busy === w) s.busy = null; if (s.using === w) s.using = null; }
@@ -2071,14 +2072,18 @@ function takeOver_(w, v, local) {
   if (w.chatWith) { const o = w.chatWith; o.held = false; if (atDesk(o)) o.pose = 'type'; w.chatWith = null; }
   if (meeting && meeting.members.includes(w)) { meeting.members = meeting.members.filter(m => m !== w); if (!meeting.members.some(m => m.summon)) meeting = null; }
   Object.assign(w, { summon: null, meetSeat: null, held: false, fetch: null, bag: false, hidden: false, headset: false, bubble: null });
-  if (!w.present || w.tx < 0) {   // not in today, or out in the hallway
-    w.seated = false; w.sitAt = null;
-    if (local && !w.home.occ) { w.present = true; sit(w, w.home); }   // your page: you start at your desk
-    else Object.assign(w, { present: true, px: 0, py: 25 * C8, tx: 0, ty: 25, pose: 'stand', dir: 'right' });   // the TV: you walk in the door
+  // not in today (or out in the hallway): they come down the hallway and in through the door, like any arrival
+  const enter = !w.present || w.tx < 0;
+  if (enter) {
+    row = row === 25 || row === 26 ? row : 25;
+    const px = w.present && w.px < 0 ? w.px : hallX();   // already in the hallway: carry on from there
+    Object.assign(w, { present: true, hidden: false, seated: false, sitAt: null, px, py: row * C8, tx: 0, ty: row, dir: 'right' });
   }
   if (w.seated) w.pose = w.sitAt.kind === 'desk' ? 'type' : 'idle';
   else w.pose = 'stand';
-  w.ctl = { q: [], dir: w.dir, local: !!local, seen: Date.now() };
+  w.ctl = { q: [], dir: w.dir, local: !!local, seen: Date.now(), enter, auto: null };
+  // your page: once in, you walk on to your desk and sit (any key takes over)
+  if (enter && local && !w.home.occ) { const path = bfs(0, w.ty, w.home.x, w.home.y); if (path && path.length) { w.ctl.auto = path; path[path.length - 1].push(w.home); } }
   return w.ctl;
 }
 // Back to the routine: walk home and carry on (or head out, if it's not their day / hours).
@@ -2086,12 +2091,29 @@ function release_(w) {
   if (!w.ctl) return;
   w.ctl = null;
   if (w.seated && w.sitAt !== w.home) standUp(w);
-  w.co.restart(() => (function* () { if (wantPresent(w) && !atDesk(w)) { standUp(w); yield* goHome(w); } yield* life(w); })());
+  w.co.restart(() => (function* () {
+    if (!wantPresent(w)) yield* leave(w);   // not their day / hours (e.g. a Monday): say bye and walk out now
+    else if (!atDesk(w)) { standUp(w); yield* goHome(w); }
+    yield* life(w);
+  })());
 }
 // One frame of a driven character: walk the queued cells in order (faster when behind), then stand, or sit on a seat.
 function drive_(w, dt) {
   const c = w.ctl;
-  if (c.local && !c.q.length && heldDir_()) queueStep_(w, heldDir_());
+  if (c.enter) {   // walking in from the hallway to the door; steps that arrive meanwhile wait in the queue
+    w.pose = 'walk'; w.walkT += dt; w.dir = 'right';
+    w.px = Math.min(0, w.px + MANUAL_WALK * dt);
+    if (w.px < 0) return;
+    c.enter = false;
+  }
+  if (c.local && !c.q.length) {
+    if (heldDir_()) queueStep_(w, heldDir_());
+    else if (c.auto && c.auto.length) {   // the walk to your desk, one cell at a time so the TV follows step by step
+      const cell = c.auto.shift(), [ax, ay] = [w.tx, w.ty];
+      c.dir = cell[0] > ax ? 'right' : cell[0] < ax ? 'left' : cell[1] > ay ? 'down' : 'up';
+      c.q.push(cell); relaySend_({ t: 'step', x: cell[0], y: cell[1], dir: cell[2] ? cell[2].face : c.dir, sit: !!cell[2] });
+    }
+  }
   if (!c.q.length) { if (!w.seated) { w.pose = 'stand'; w.dir = c.dir; } return; }
   const [nx, ny, seat] = c.q[0];
   if (w.seated) standUp(w);
@@ -2142,6 +2164,7 @@ if (MY) {
     const k = e.key.toLowerCase(), dir = KEY_DIR[k];
     if (dir || k === ' ' || k === 'enter') e.preventDefault();
     if (e.repeat || !MY.w.ctl) return;
+    if (dir || k === ' ' || k === 'enter') MY.w.ctl.auto = null;   // you take over from the walk to your desk
     if (dir) { held_ = held_.filter(d => d !== dir).concat(dir); queueStep_(MY.w, dir); }
     else if (k === ' ' || k === 'enter') sitOrStand_(MY.w);
   });
@@ -2152,7 +2175,7 @@ if (MY) {
 // ---- the relay: one WebSocket per page. Your page sends your steps; every page moves everyone else who is driving.
 const relay = { ws: null, ok: false, wait: 1000, stop: false, hideT: 0 };
 function relaySend_(m) { if (MY && relay.ok) try { relay.ws.send(JSON.stringify(m)); } catch (e) {} }
-function sendHello_() { const w = MY.w; relaySend_({ t: 'hello', x: w.tx, y: w.ty, dir: w.ctl ? w.ctl.dir : w.dir, sit: w.seated }); }
+function sendHello_() { const w = MY.w; relaySend_({ t: 'hello', x: w.tx, y: w.ty, dir: w.ctl ? w.ctl.dir : w.dir, sit: w.seated }); }   // (walking in: tx/ty is the door cell)
 function relayConnect_() {
   if (!RELAY_URL || typeof WebSocket === 'undefined' || relay.ws || relay.stop) return;
   let ws;
@@ -2176,7 +2199,7 @@ function onRelay_(m) {
   if (!hit || (MY && hit[0] === MY.w)) return;   // unknown id, or our own character (only this page drives it)
   const [w, v] = hit;
   if (m.t === 'bye') { release_(w); return; }
-  const c = takeOver_(w, v, false);
+  const c = takeOver_(w, v, false, m.x === 0 ? m.y : null);
   c.seen = Date.now();
   if (m.t === 'hb') return;
   c.dir = m.dir || c.dir;
@@ -2189,7 +2212,7 @@ function onRelay_(m) {
   const path = bfs(ax, ay, m.x, m.y);
   if (!path || path.length > 30) {   // lost track (or too far): jump there
     if (w.seated) standUp(w);
-    c.q = []; Object.assign(w, { px: m.x * C8, py: m.y * C8, tx: m.x, ty: m.y, dir: c.dir, pose: 'stand' });
+    c.q = []; c.enter = false; Object.assign(w, { px: m.x * C8, py: m.y * C8, tx: m.x, ty: m.y, dir: c.dir, pose: 'stand' });
     if (seat && !seat.occ) sit(w, seat);
     return;
   }
@@ -2198,7 +2221,7 @@ function onRelay_(m) {
   if (c.q.length > 10) {   // way behind (e.g. this tab was in the background): skip ahead
     const [jx, jy] = c.q[c.q.length - 4];
     if (w.seated) standUp(w);
-    c.q = c.q.slice(-3); Object.assign(w, { px: jx * C8, py: jy * C8, tx: jx, ty: jy });
+    c.q = c.q.slice(-3); c.enter = false; Object.assign(w, { px: jx * C8, py: jy * C8, tx: jx, ty: jy });
   }
 }
 // keep-alive: drivers say "still here" (others drop a silent driver after 75 s); viewers ping (answered without waking the relay)
