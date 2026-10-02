@@ -381,6 +381,13 @@ for (const [l, r, role] of [[14, 18, 'intern'], [24, 28, 'buyer'], [34, 38, 'buy
 deskSeats.push(addSeat(46, 20, 'right', 'desk', { chair: '#3a3f4a', stool: true, role: 'buyer', code: 'bar-1' }));   // bar work station: a buyer (2679)
 addSeat(46, 22, 'right', 'desk', { chair: '#3a3f4a', stool: true });
 addSeat(46, 24, 'right', 'bar', { chair: '#3a3f4a', stool: true });
+// Side seats at a widened work island sit back from it: the desk's extra width on that side + 2 px
+for (const s of SEATS) {
+  if (s.kind !== 'desk' || (s.face !== 'right' && s.face !== 'left')) continue;
+  const mx = s.x + (s.face === 'right' ? 1 : -1);
+  const t = TABLES.find(t => t.grow && mx >= t.x0 && mx <= t.x1 && s.y >= t.y0 && s.y <= t.y1);
+  if (t) s.back = (t.grow[s.face === 'right' ? 0 : 1] + 2) * (s.face === 'right' ? -1 : 1);
+}
 const MEET_SEATS = [
   addSeat(42, 3, 'left', 'meet'), addSeat(35, 2, 'down', 'meet'), addSeat(35, 5, 'up', 'meet'), addSeat(37, 2, 'down', 'meet'), addSeat(37, 5, 'up', 'meet'),
   addSeat(39, 2, 'down', 'meet'), addSeat(39, 5, 'up', 'meet'), addSeat(34, 2, 'down', 'meet'),
@@ -1222,7 +1229,7 @@ function drawSeatKit(s) {
   }
 }
 function drawChair(s) {
-  const x = s.x * C8, y = s.y * C8, c = s.chair, d = shade(c, 0.78), base = s.kind === 'desk' ? '#3a3f4a' : '#d8d8d2';
+  const x = s.x * C8 + (s.back || 0), y = s.y * C8, c = s.chair, d = shade(c, 0.78), base = s.kind === 'desk' ? '#3a3f4a' : '#d8d8d2';   // back = pulled out from a widened desk
   if (s.stool) {     // bar stool: round seat on a tall post with a foot ring
     R(x, y + 2, 8, 4, OUT); R(x + 1, y + 3, 6, 2, '#3a3f4a'); R(x + 1, y + 3, 6, 1, '#55608a');
     R(x + 3, y + 6, 2, 2, '#9aa4b0'); R(x + 1, y + 7, 6, 1, '#9aa4b0');
@@ -1355,12 +1362,13 @@ function drawWall() {
 // ---------------------------------------------------------------- people drawing
 function drawPerson(w) {
   if (w.hidden) return;
-  const X = Math.round(w.px), Y = Math.round(w.py), F = w.frames, sx = X - 2;
+  const X = Math.round(w.px), Y = Math.round(w.py), F = w.frames;
+  let sx = X - 2;
   let c, sy, view;
   if (w.seated) {
     const s = w.sitAt, busy = (w.pose === 'type' && typingNow(w)) || w.pose === 'eat';
     const f = busy ? ((TIME * (w.pose === 'eat' ? 2 : 9) + w.i) | 0) % 2 : 0;
-    if (s.face === 'right' || s.face === 'left') { c = F[(s.face === 'right' ? 'sitRight' : 'sitLeft') + (f ? 'B' : 'A')]; sy = Y - 7; view = s.face; }
+    if (s.face === 'right' || s.face === 'left') { c = F[(s.face === 'right' ? 'sitRight' : 'sitLeft') + (f ? 'B' : 'A')]; sy = Y - 7; view = s.face; sx += s.back || 0; }   // sit back from a widened desk
     else if (s.face === 'down') { c = F.sitDown; sy = Y - 3; view = 'down'; }
     else { c = f ? F.sitUpB : F.sitUpA; sy = Y - 5; view = 'up'; }
   } else {
