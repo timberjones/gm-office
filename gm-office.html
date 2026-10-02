@@ -35,6 +35,7 @@
     ?tz=America/Chicago   clock time zone (weather city is set in the Apps Script: WEATHER_CITY)
     ?scale=4        force the pixel scale                ?lofi=0    no warm tint / vignette
     ?fps=30         frame rate (default 60)              ?smooth=0  no Scale2x smoothing (falls back to 2x supersampling)
+    ?hd=0           plain 1x sprites (no rims / pre-smoothed edges)
     ?seed=N         seed the randomness                  ?dogs=1    bring the poodles in right away (9:00-16:30)
     ?chat=0         no speech bubbles at all              ?feed=0    don't read the live activity feed
   Keys: N night, D day, C real clock, W cycle weather, B say a one-liner now, F fullscreen
@@ -146,6 +147,7 @@ const mixC = (a, b, t) => { const A = hex(a), B = hex(b); return rgb(A.map((v, i
 const shade = (c, k) => rgb(hex(c).map(v => v * k));
 
 // ---------------------------------------------------------------- drawing primitives
+const RD = { willReadFrequently: true };   // CPU-backed 2d context for canvases we read back (GPU readback cost ~100 ms each)
 const canvas = (w, h) => { const c = document.createElement('canvas'); c.width = Math.max(1, w); c.height = Math.max(1, h); return c; };
 let g = null;
 // SS = supersampling: the scene canvas runs at SS x the art resolution, so moving things can sit on half pixels
@@ -167,41 +169,86 @@ function line(x0, y0, x1, y1, c) {
   }
 }
 function box(x, y, w, h, c) { R(x - 1, y - 1, w + 2, h + 2, OUT); R(x, y, w, h, c); }   // filled rect with outline
-function blit(c, x, y) { g.drawImage(c, snap(x) - 1, snap(y) - 1); }
-function outline(c) {
-  const x = c.getContext('2d'), W = c.width, H = c.height, id = x.getImageData(0, 0, W, H), d = id.data, a = new Uint8Array(W * H);
-  for (let i = 0; i < W * H; i++) a[i] = d[i * 4 + 3] > 0 ? 1 : 0;
-  const [r, gg, b] = hex(OUT);
-  for (let y = 0; y < H; y++) for (let xx = 0; xx < W; xx++) {
-    const i = y * W + xx;
-    if (a[i]) continue;
-    if ((xx > 0 && a[i - 1]) || (xx < W - 1 && a[i + 1]) || (y > 0 && a[i - W]) || (y < H - 1 && a[i + W])) { d[i * 4] = r; d[i * 4 + 1] = gg; d[i * 4 + 2] = b; d[i * 4 + 3] = 255; }
-  }
-  x.putImageData(id, 0, 0);
+// ---- sprites ---------------------------------------------------------------------------------------
+// Every sprite is kept twice: .lo = the plain 1x art (navy outline), and (ART 2, the default) a 2x copy
+// with Scale2x-smoothed edges plus GM-yard style rims: a half-pixel highlight on the top-left edges and a
+// shadow on the bottom-right. The 2x copy is used when the scene renders at 2x (SS 2), the 1x one otherwise.
+const ART = params.get('hd') === '0' ? 1 : 2;
+const RIM_LIGHT = 0.30, RIM_DARK = 0.34, EDGE = 1;   // EDGE = outline marker in packed-pixel arrays
+const PK_CACHE = new Map();
+const pk = c => { let v = PK_CACHE.get(c); if (v === undefined) { const [r, gg, b] = hex(c); v = (255 << 24 | b << 16 | gg << 8 | r) >>> 0; PK_CACHE.set(c, v); } return v; };
+function blit(c, x, y) {
+  const s = c.lo && !(g === sceneCtx && SS >= 2) ? c.lo : c, a = s.art || 1;
+  g.drawImage(s, snap(x) - 1, snap(y) - 1, s.width / a, s.height / a);
 }
-function mk(w, h, fn) { const c = canvas(w + 2, h + 2), save = g; g = c.getContext('2d'); g.translate(1, 1); fn(); g = save; outline(c); return c; }
-// Character-map sprite, built straight into an ImageData (pixels + 1px navy outline) and written once.
-// Drawing each pixel and then reading the canvas back for the outline cost ~55 ms per person (~0.9 s at startup).
-const RGB_CACHE = new Map();
-const rgbOf = c => { let v = RGB_CACHE.get(c); if (!v) { v = hex(c); RGB_CACHE.set(c, v); } return v; };
+// Scale2x / EPX on packed pixels (same rule as the GPU shader)
+function epx2_(a, w, h) {
+  const o = new Uint32Array(w * h * 4), W = w * 2;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x, p = a[i], A = y > 0 ? a[i - w] : p, D = y < h - 1 ? a[i + w] : p, C = x > 0 ? a[i - 1] : p, B = x < w - 1 ? a[i + 1] : p;
+    const k = y * 2 * W + x * 2;
+    o[k] = C === A && C !== D && A !== B ? A : p;
+    o[k + 1] = A === B && A !== C && B !== D ? B : p;
+    o[k + W] = D === C && D !== B && C !== A ? C : p;
+    o[k + W + 1] = B === D && B !== A && D !== C ? D : p;
+  }
+  return o;
+}
+function pxCanvas_(px, w, h, art) {
+  const img = new ImageData(w, h), u = new Uint32Array(img.data.buffer), out = pk(OUT);
+  for (let i = 0; i < px.length; i++) u[i] = px[i] === EDGE ? out : px[i];
+  if (art > 1) {   // rims, on the body only (not the outline)
+    const d = img.data, body = (x, y) => x >= 0 && y >= 0 && x < w && y < h && px[y * w + x] > EDGE;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      if (!body(x, y)) continue;
+      const k = (y * w + x) * 4;
+      if (!body(x - 1, y - 1)) for (let c = 0; c < 3; c++) d[k + c] += (255 - d[k + c]) * RIM_LIGHT;
+      else if (!body(x + 1, y + 1)) for (let c = 0; c < 3; c++) d[k + c] *= 1 - RIM_DARK;
+    }
+  }
+  const c = canvas(w, h);
+  c.getContext('2d').putImageData(img, 0, 0);
+  c.art = art;
+  return c;
+}
+// px: packed pixels (0 = empty) of w x h, with a 1px empty pad. Adds the outline and builds both sizes.
+function spriteOf_(px, w, h) {
+  const on = i => px[i] > EDGE;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x;
+    if (!px[i] && ((x > 0 && on(i - 1)) || (x < w - 1 && on(i + 1)) || (y > 0 && on(i - w)) || (y < h - 1 && on(i + w)))) px[i] = EDGE;
+  }
+  const lo = pxCanvas_(px, w, h, 1);
+  if (ART < 2) return lo;
+  const hi = pxCanvas_(epx2_(px, w, h), w * 2, h * 2, 2);
+  hi.lo = lo;
+  return hi;
+}
+// a whole layer (floor, walls, surroundings) -> its Scale2x copy, once per rebuild
+function x2Layer_(c) {
+  if (ART < 2) return null;
+  const px = new Uint32Array(c.getContext('2d').getImageData(0, 0, c.width, c.height).data.buffer);
+  const img = new ImageData(c.width * 2, c.height * 2);
+  new Uint32Array(img.data.buffer).set(epx2_(px, c.width, c.height));
+  const o = canvas(c.width * 2, c.height * 2);
+  o.getContext('2d').putImageData(img, 0, 0);
+  return o;
+}
+// procedural sprite: draw with R/P inside fn
+function mk(w, h, fn) {
+  const c = canvas(w + 2, h + 2), save = g; g = c.getContext('2d', RD); g.translate(1, 1); fn(); g = save;
+  const px = new Uint32Array(c.getContext('2d').getImageData(0, 0, w + 2, h + 2).data.buffer);
+  for (let i = 0; i < px.length; i++) if (px[i] >>> 24 === 0) px[i] = 0;
+  return spriteOf_(px, w + 2, h + 2);
+}
+// Character-map sprite, built straight into packed pixels (no canvas read-back: that cost ~55 ms per person).
 function bakeRows(rows, pal, flip) {
-  const h = rows.length, w = rows[0].length, W = w + 2, H = h + 2;
-  const img = new ImageData(W, H), d = img.data, on = new Uint8Array(W * H);
-  const put = (k, rgb) => { d[k * 4] = rgb[0]; d[k * 4 + 1] = rgb[1]; d[k * 4 + 2] = rgb[2]; d[k * 4 + 3] = 255; };
+  const h = rows.length, w = rows[0].length, W = w + 2, px = new Uint32Array(W * (h + 2));
   for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
     const col = pal[rows[j][i]];
-    if (!col) continue;
-    const k = (1 + j) * W + 1 + (flip ? w - 1 - i : i);
-    on[k] = 1; put(k, rgbOf(col));
+    if (col) px[(1 + j) * W + 1 + (flip ? w - 1 - i : i)] = pk(col);
   }
-  const out = rgbOf(OUT);
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const k = y * W + x;
-    if (!on[k] && ((x > 0 && on[k - 1]) || (x < W - 1 && on[k + 1]) || (y > 0 && on[k - W]) || (y < H - 1 && on[k + W]))) put(k, out);
-  }
-  const c = canvas(W, H);
-  c.getContext('2d').putImageData(img, 0, 0);
-  return c;
+  return spriteOf_(px, W, h + 2);
 }
 const FONT = { W: [5, 5, 7, 7, 5], C: [3, 4, 4, 4, 3] };
 function glyphs(s, x, y, c) {
@@ -992,7 +1039,7 @@ function buildSprites() {
 
 // ---------------------------------------------------------------- static building layer
 const BGX = 24, BGY = 30;   // bg canvas margin around the building's local origin
-let bg, wallFG;
+let bg, wallFG, bg2 = null, wallFG2 = null, ext2 = null;   // *2 = Scale2x copies for the 2x scene
 // one wide end-to-end window per small office; the conference room's window covers its left 30%
 const WINDOWS = OFFICES.map((o, i) => {
   const x = o.x0 * C8 + 3, right = i < DIVIDERS.length ? DIVIDERS[i] * C8 - 1 : GX * C8 - 3;
@@ -1003,7 +1050,7 @@ const WINDOWS = OFFICES.map((o, i) => {
 const CLOCK = { x: 341, y: -11 };
 function buildLayers() {
   bg = canvas(GX * C8 + BGX * 2, GY * C8 + BGY + 12);
-  g = bg.getContext('2d'); g.translate(BGX, BGY);
+  g = bg.getContext('2d', RD); g.translate(BGX, BGY);
   // hardwood floor, staggered planks
   const planks = ['#c8894e', '#c2834a', '#cc8f55', '#bf7f45'];
   for (let y = 0; y < GY * C8; y += 4) {
@@ -1068,7 +1115,7 @@ function buildLayers() {
   for (const [dx, dy] of [[0, -5], [0, 5], [-5, 0], [5, 0]]) P(CLOCK.x + dx, CLOCK.y + dy, '#2b2f3a');
 
   // window frames on top of the sky
-  wallFG = canvas(bg.width, bg.height); g = wallFG.getContext('2d'); g.translate(BGX, BGY);
+  wallFG = canvas(bg.width, bg.height); g = wallFG.getContext('2d', RD); g.translate(BGX, BGY);
   for (const { x, y, w, h } of WINDOWS) {
     R(x - 2, y - 2, w + 4, h + 4, OUT); g.clearRect(x, y, w, h);
     R(x - 1, y - 1, w + 2, 1, '#2b2f3a'); R(x - 1, y + h, w + 2, 1, '#2b2f3a'); R(x - 1, y, 1, h, '#2b2f3a'); R(x + w, y, 1, h, '#2b2f3a');
@@ -1077,6 +1124,7 @@ function buildLayers() {
     R(x, y + 5, w, 1, '#2b2f3a');
     R(x - 3, y + h + 1, w + 6, 2, '#e2ded6'); R(x - 3, y + h + 3, w + 6, 1, OUT);
   }
+  bg2 = x2Layer_(bg); wallFG2 = x2Layer_(wallFG);
 }
 
 // ---------------------------------------------------------------- surroundings — fills any screen shape
@@ -1086,7 +1134,7 @@ const outdoors = y => y < OY - 22;                    // view y: only the alley 
 const HALL_Y0 = 24 * C8, HALL_Y1 = GY * C8;          // local y of the hallway floor
 const hallX = () => -OX - 16;                         // local x just past the left edge of the screen
 function buildExterior() {
-  ext = canvas(VW, VH); g = ext.getContext('2d');
+  ext = canvas(VW, VH); g = ext.getContext('2d', RD);
   const snow = weather === 'snow', wet = weather === 'rain';
   // neighbouring units
   R(0, 0, VW, VH, '#7d808a');
@@ -1110,6 +1158,7 @@ function buildExterior() {
     for (let x = hx1 - 40; x > -12; x -= 56) { R(x, hy0 - 10, 10, 10, OUT); R(x + 1, hy0 - 9, 8, 9, '#9a6a3c'); P(x + 7, hy0 - 5, '#e9c46a'); }   // other units' doors
     R(0, hy1, hx1, 4, OUT); R(0, hy1, hx1, 3, '#f2efe8');
   }
+  ext2 = SS >= 2 ? x2Layer_(ext) : null;
   exteriorDirty = false;
 }
 const lampPositions = () => OY - 22 > 10 ? [[OX + 60, OY - 30], [OX + 220, OY - 30]] : [];
@@ -1596,7 +1645,7 @@ function setupEpx_(w, h) {
 function drawEpx_() {   // scene canvas -> texture -> shader -> epx.cv (screen-sized)
   const gl = epx.gl;
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, view);
-  gl.uniform2f(epx.uSize, VW, VH);
+  gl.uniform2f(epx.uSize, VW * SS, VH * SS);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
 
@@ -1611,10 +1660,11 @@ function resize() {
   scale = params.has('scale') ? parseFloat(params.get('scale')) : fit < 1 ? fit : (Math.floor(fit) / fit >= 0.85 ? Math.floor(fit) : fit);
   VW = Math.ceil(cv.width / scale); VH = Math.ceil(cv.height / scale);
   OX = Math.floor((VW - GX * C8) / 2); OY = Math.floor((VH - GY * C8) / 2) + 10;
-  // Smoothing: render the art at 1x and let the GPU shader do a Scale2x upscale (less blocky on a TV).
+  // Smoothing: render the scene at 2x (Scale2x'd sprites with rims, Scale2x'd static layers; ?hd=0 for 1x)
+  // and let the GPU shader do one more Scale2x pass up to the screen (less blocky on a TV).
   // Without it (?smooth=0, no WebGL, or a tiny screen): supersample 2x when the scale is an even whole number.
   epxOn = SMOOTH && scale >= 2 && setupEpx_(Math.round(VW * scale), Math.round(VH * scale));
-  SS = epxOn ? 1 : params.has('ss') ? Math.max(1, parseInt(params.get('ss')) || 1) : (Number.isInteger(scale) && scale >= 4 && scale % 2 === 0 ? 2 : 1);
+  SS = epxOn ? ART : params.has('ss') ? Math.max(1, parseInt(params.get('ss')) || 1) : (Number.isInteger(scale) && scale >= 4 && scale % 2 === 0 ? 2 : 1);
   view = canvas(VW * SS, VH * SS); vctx = view.getContext('2d'); sceneCtx = vctx;
   lc.c = canvas(VW * SS, VH * SS); lc.x = lc.c.getContext('2d');
   exteriorDirty = true;
@@ -1640,7 +1690,8 @@ function render() {
   lights = [];
   if (exteriorDirty) buildExterior();
   g = vctx; g.setTransform(SS, 0, 0, SS, 0, 0); g.imageSmoothingEnabled = false;
-  g.drawImage(ext, 0, 0);
+  const hiL = SS >= 2;   // the 2x scene uses the Scale2x copies of the static layers
+  g.drawImage(hiL && ext2 || ext, 0, 0, VW, VH);
   const alley = Math.max(0, OY - 22);
   if ((weather === 'cloud' || weather === 'rain') && alley > 0) {   // cloud shadows drifting over the alley
     g.save(); g.beginPath(); g.rect(0, 0, VW, alley - 1); g.clip();
@@ -1649,9 +1700,9 @@ function render() {
     g.restore();
   }
   g.translate(OX, OY);
-  g.drawImage(bg, -BGX, -BGY);
+  g.drawImage(hiL && bg2 || bg, -BGX, -BGY, bg.width, bg.height);
   drawWindows();
-  g.drawImage(wallFG, -BGX, -BGY);
+  g.drawImage(hiL && wallFG2 || wallFG, -BGX, -BGY, bg.width, bg.height);
   drawClockHands();
   for (const d of ROOM_DOORS) { const busy = d.kind === 'wc' && SPOTS.wc.spots.some(s => s.door === d.x && s.using && s.using.hidden); P(d.x * C8 + 6, 21 * C8 + 4, busy ? '#d9453b' : '#22b573'); }
   const list = STATIC.slice();
