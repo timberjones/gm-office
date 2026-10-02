@@ -480,13 +480,13 @@ const KNOWN = {
   'buyer-10': [{ uid: 2629, look: { hair: '#1a1a24', skin: 2, shirt: '#f472b6', pants: '#2f3a5c', style: 'long' } }],
   'buyer-11': [{ uid: 2380, look: { hair: '#6b4a2a', skin: 0, shirt: '#2f9a8a', pants: '#3a3f55', style: 'short', build: 'tall' } }],
   'buyer-12': [{ uid: 2155, look: { hair: '#6b4a2a', skin: 0, shirt: '#d9453b', pants: '#2f3a5c', style: 'short', hat: '#2a3a6c' } }],
-  'buyer-13': [{ uid: 2639, look: { hair: '#e3c26a', skin: 0, shirt: '#e9c46a', pants: '#3b5a96', style: 'bun' }, quirks: ["What's for lunch?"] }],
+  'buyer-13': [{ uid: 2639, look: { hair: '#e3c26a', skin: 0, shirt: '#e9c46a', pants: '#3b5a96', style: 'bun' } }],   // "What's for lunch?" lives in the sheet's One-liners tab
 };
 const workers = deskSeats.map((seat, i) => {   // one person per desk; who comes in depends on the day (see pickRoster)
   const R0 = ROLES[seat.role];
   const variants = (KNOWN[seat.code] || [{}]).map(p => {
     const lk = p.look || R0.look || randomLook();
-    return { uid: p.uid || null, quirks: p.quirks || [], look: lk, frames: buildFrames(lk) };
+    return { uid: p.uid || null, look: lk, frames: buildFrames(lk) };
   });
   const v = variants[0], look = v.look;
   const w = {
@@ -1277,27 +1277,17 @@ function lighting() {
   }
 }
 
-// ---------------------------------------------------------------- sales one-liners (same as GM yard)
-// Every so often someone says one line. Drawn on the screen canvas with a system font so it stays crisp at any scale.
-const PHRASES = [
-  'Another day in paradise!',
-  'Smiling and dialing!',
-  'Making magic happen!',
-  'Just out here changing lives... one tree at a time.',
-  'Fueling the machine.',
-  "If I were doing any better, it'd be illegal.",
-  "Chasing the dream... it's fast, but I'm trying.",
-  'Training the algorithm on human rejection.',
-  'Just an organic chatbot seeking a human connection.',
-];
+// ---------------------------------------------------------------- speech bubbles
+// Every so often someone says one line. Lines come ONLY from the GM Office Activity sheet's speech feed:
+// each person's workspace numbers as sentences + one-liners typed into its One-liners tab
+// ("all" lines can be said by anyone). Drawn on the screen canvas with a system font so it stays crisp.
 const CHAT = params.get('chat') !== '0';
 let speech = null, chatT = rnd(15, 40), lastText = '';
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-// Live activity from the GM Office Activity sheet (Apps Script web app, refreshed every 6 h from Redash).
-// Public and email-free: team totals + counts for the seats mapped to a user id. ?feed=0 turns it off, ?feed=<url> overrides.
+// Apps Script web app, refreshed every 6 h from Redash. Public and email-free. ?feed=0 turns it off, ?feed=<url> overrides.
 const FEED_URL = params.get('feed') === '0' ? null : (params.get('feed') || 'https://script.google.com/macros/s/AKfycbxuD6OJJPCtIqPTPoDGa4DD95pH6j_lNowkOir2TzLUx3K0xCwuY3PsC0sriTjo0Aq3VA/exec');
-let feed = null;
+let feed = null;   // { ok, updated, feed: [ { user_id, seat, speech: [...] }, ... ] }
 async function fetchFeed() {
   if (!FEED_URL) return;
   try {
@@ -1305,49 +1295,24 @@ async function fetchFeed() {
     const r = await fetch(FEED_URL, { signal: ac.signal, cache: 'no-store' });
     clearTimeout(tm);
     const j = await r.json();
-    if (j && j.ok) feed = j;
-  } catch (e) { /* keep the last good feed; speech falls back to the one-liners */ }
+    if (j && j.ok && Array.isArray(j.feed)) feed = j;
+  } catch (e) { /* keep the last good feed */ }
 }
-const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
-function teamLines_() {
-  if (!feed || !feed.team) return [];
-  const t = feed.team, out = [];
-  if (t.quote.new) out.push(plural(t.quote.new, 'new quote', 'new quotes') + ' today!');
-  if (t.quote.updated) out.push(plural(t.quote.updated, 'quote', 'quotes') + ' updated today.');
-  if (t.order.new) out.push(plural(t.order.new, 'new order', 'new orders') + ' today!');
-  if (t.order.updated) out.push(plural(t.order.updated, 'order', 'orders') + ' moving along today.');
-  if (t.delivery.new) out.push(plural(t.delivery.new, 'delivery', 'deliveries') + ' scheduled today!');
-  if (t.delivery.updated) out.push(plural(t.delivery.updated, 'delivery', 'deliveries') + ' updated today.');
-  return out;
+function speechFor_(uid) {
+  if (!feed) return [];
+  const e = feed.feed.find(x => String(x.user_id) === String(uid));
+  return e && Array.isArray(e.speech) ? e.speech.filter(Boolean) : [];
 }
-// lines only the person at that seat (with that user id, if it's their turn today) can say
-function personalLines_(w) {
-  if (!feed || !feed.seats || !w.v.uid) return [];
-  const s = feed.seats.find(x => x.seat === w.home.code && x.user_id === w.v.uid);
-  if (!s) return [];
-  const out = [];
-  if (s.quote.new) out.push('Just sent ' + plural(s.quote.new, 'new quote', 'new quotes') + '!');
-  if (s.quote.updated) out.push('Updated ' + plural(s.quote.updated, 'quote', 'quotes') + ' today.');
-  if (s.order.new) out.push(plural(s.order.new, 'new order', 'new orders') + ' in today!');
-  if (s.order.updated) out.push('Pushed ' + plural(s.order.updated, 'order', 'orders') + ' forward today.');
-  if (s.delivery.new) out.push('Booked ' + plural(s.delivery.new, 'delivery', 'deliveries') + '!');
-  if (s.delivery.updated) out.push('Sorted out ' + plural(s.delivery.updated, 'delivery', 'deliveries') + ' today.');
-  return out;
-}
-// Pick who speaks and what: sales one-liners, team totals, someone's own numbers, or their catchphrase.
+// Who speaks: someone in the office with their own lines (it's their turn at a shared seat), or anyone for "all" lines.
 function sayRandom() {
+  if (!feed) return false;
   const here = workers.filter(w => w.present && !w.hidden && w.px >= 0);
-  const talkers = here.filter(w => w.talk > 0);   // plant buyers talk the most, interns never
-  if (!talkers.length) return false;
-  const h = world.hour, pools = [];
-  const talker = () => weighted(talkers.map(c => [c, c.talk]));
-  pools.push([() => [talker(), pick(PHRASES)], 3]);
-  const team = teamLines_();
-  if (team.length) pools.push([() => [talker(), pick(team)], 2]);
-  const mine = here.map(w => [w, personalLines_(w)]).filter(p => p[1].length);
-  if (mine.length) pools.push([() => { const [w, lines] = pick(mine); return [w, pick(lines)]; }, 4]);
-  const quirky = here.filter(w => w.v.quirks.length);
-  if (quirky.length) pools.push([() => { const w = pick(quirky); return [w, pick(w.v.quirks)]; }, h >= 10.5 && h < 12.5 ? 4 : 1]);   // lunch talk peaks late morning
+  const pools = [];
+  const mine = here.filter(w => w.v.uid).map(w => [w, speechFor_(w.v.uid)]).filter(p => p[1].length);
+  if (mine.length) pools.push([() => { const [w, lines] = pick(mine); return [w, pick(lines)]; }, 3]);
+  const all = speechFor_('all'), talkers = here.filter(w => w.talk > 0);   // interns never talk
+  if (all.length && talkers.length) pools.push([() => [weighted(talkers.map(c => [c, c.talk])), pick(all)], 2]);
+  if (!pools.length) return false;
   let w, text;
   for (let k = 0; k < 4; k++) { [w, text] = weighted(pools)(); if (text !== lastText) break; }
   lastText = text;
