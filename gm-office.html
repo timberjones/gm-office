@@ -365,6 +365,7 @@ const PROPS = [
   ['counterV', 27, 22, 1, 6], ['coffee', 29, 27, 2, 1], ['cooler', 31, 27, 1, 1], ['fridge', 32, 26, 2, 2], ['island', 31, 21, 2, 4],
 ];
 for (const [, x, y, w, h] of PROPS) blockRect(x, y, x + w - 1, y + h - 1);
+blockRect(12, 17, 30, 17);   // the shelf racks sit right against islands 1-2: no walking between them
 
 // spots people walk to; face = which way they look once there
 const SPOTS = {
