@@ -233,6 +233,10 @@ function hairMods(r, view, m) {
     else if (view === 'up') { for (const j of [7, 8]) for (let i = 2; i <= 9; i++) s(j, i, 'h'); for (let i = 3; i <= 8; i++) s(9, i, 'h'); }
     else for (const j of [7, 8, 9]) for (let i = 2; i <= 4; i++) s(j, i, 'h');
   }
+  if (m.goatee) {   // thin goatee: a line round the mouth and a little chin tuft
+    if (view === 'down') { for (let i = 4; i <= 7; i++) s(7, i, 'h'); s(8, 5, 'h'); s(8, 6, 'h'); }
+    else if (view === 'right') { s(7, 8, 'h'); s(7, 9, 'h'); s(8, 7, 'h'); }
+  }
   if (m.beard) {
     if (view === 'down') { for (let i = 2; i <= 9; i++) s(7, i, 'h'); for (let i = 4; i <= 7; i++) s(8, i, 'h'); }
     else if (view === 'right') { for (let i = 6; i <= 10; i++) s(7, i, 'h'); s(8, 6, 'h'); s(8, 7, 'h'); }
@@ -338,7 +342,7 @@ for (const [l, r, role] of [[14, 18, 'intern'], [24, 28, 'buyer'], [34, 38, 'buy
   }
 [11, 13].forEach((y, i) => deskSeats.push(addSeat(45, y, 'right', 'desk', { role: 'buyer', code: 'buyer-' + (12 + i) })));   // right wall desks: buyers too
 // bar table: 3 stools; the top one is a real work station, the second monitor sits unused
-deskSeats.push(addSeat(46, 20, 'right', 'desk', { chair: '#3a3f4a', stool: true, role: 'staff', code: 'bar-1' }));
+deskSeats.push(addSeat(46, 20, 'right', 'desk', { chair: '#3a3f4a', stool: true, role: 'buyer', code: 'bar-1' }));   // bar work station: a buyer (2679)
 addSeat(46, 22, 'right', 'desk', { chair: '#3a3f4a', stool: true });
 addSeat(46, 24, 'right', 'bar', { chair: '#3a3f4a', stool: true });
 const MEET_SEATS = [
@@ -481,12 +485,15 @@ const KNOWN = {
   'buyer-11': [{ uid: 2380, look: { hair: '#6b4a2a', skin: 0, shirt: '#2f9a8a', pants: '#3a3f55', style: 'short', build: 'tall' } }],
   'buyer-12': [{ uid: 2155, look: { hair: '#6b4a2a', skin: 0, shirt: '#d9453b', pants: '#2f3a5c', style: 'short', hat: '#2a3a6c' } }],
   'buyer-13': [{ uid: 2639, look: { hair: '#e3c26a', skin: 0, shirt: '#e9c46a', pants: '#3b5a96', style: 'bun' } }],   // "What's for lunch?" lives in the sheet's One-liners tab
+  'buyer-4': [{ uid: 2350, dogOwner: true, look: { hair: '#8a5a32', skin: 0, shirt: '#2f9a8a', pants: '#2f3a5c', style: 'long' } }],   // the poodles' owner
+  'am-3': [{ uid: 2104, look: { hair: '#c8742a', skin: 0, shirt: '#3b5a96', pants: '#3a3f55', style: 'short', build: 'tall' } }],
+  'bar-1': [{ uid: 2679, look: { hair: '#2a1a14', skin: 2, shirt: '#5b6a95', pants: '#2a2238', style: 'short', goatee: true } }],
 };
 const workers = deskSeats.map((seat, i) => {   // one person per desk; who comes in depends on the day (see pickRoster)
   const R0 = ROLES[seat.role];
   const variants = (KNOWN[seat.code] || [{}]).map(p => {
     const lk = p.look || R0.look || randomLook();
-    return { uid: p.uid || null, look: lk, frames: buildFrames(lk) };
+    return { uid: p.uid || null, dogOwner: !!p.dogOwner, look: lk, frames: buildFrames(lk) };
   });
   const v = variants[0], look = v.look;
   const w = {
@@ -745,10 +752,12 @@ function* dogVisit(d) {
   yield* walkStraight(d, 0, row * C8, SPD);
   d.tx = 0; d.ty = row;
   const end = TIME + rnd(180, 600);
-  while (TIME < end && dogTime()) {     // trot around, stop and sniff, trot on
-    const [x, y] = pick(FLOOR);
+  while (TIME < end && dogTime()) {     // trot around, stop and sniff, trot on; mostly stay close to their owner (2350)
+    const owner = workers.find(w => w.v.dogOwner && w.present && !w.hidden && w.px >= 0);
+    const near = owner ? FLOOR.filter(([fx, fy]) => Math.abs(fx - owner.tx) + Math.abs(fy - owner.ty) <= 3) : [];
+    const toOwner = near.length && chance(0.8), [x, y] = toOwner ? pick(near) : pick(FLOOR);
     yield* walkTo(d, x, y, SPD);
-    d.pose = 'stand'; yield rnd(0.5, 4);
+    d.pose = 'stand'; yield toOwner ? rnd(4, 12) : rnd(0.5, 4);   // hang around her desk a while
   }
   yield* walkTo(d, 0, row, SPD);
   yield* walkStraight(d, hallX(), row * C8, SPD);
@@ -1317,6 +1326,7 @@ function sayRandom() {
   for (let k = 0; k < 4; k++) { [w, text] = weighted(pools)(); if (text !== lastText) break; }
   lastText = text;
   w.bubble = null;
+  if (w.role === 'am') text = text.toUpperCase();   // account managers are loud: ALL CAPS
   speech = { w, text, t: 0, life: 4 + text.length * 0.07 };
   return true;
 }
