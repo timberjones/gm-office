@@ -174,7 +174,8 @@ function box(x, y, w, h, c) { R(x - 1, y - 1, w + 2, h + 2, OUT); R(x, y, w, h, 
 // with Scale2x-smoothed edges plus GM-yard style rims: a half-pixel highlight on the top-left edges and a
 // shadow on the bottom-right. The 2x copy is used when the scene renders at 2x (SS 2), the 1x one otherwise.
 const ART = params.get('hd') === '0' ? 1 : 2;
-const RIM_LIGHT = 0.30, RIM_DARK = 0.34, EDGE = 1;   // EDGE = outline marker in packed-pixel arrays
+const RIM_LIGHT = 0.30, RIM_DARK = 0.34, EDGE = 1;
+const RIM_LIT = params.get('style') === 'classic' ? [255, 255, 255] : [255, 240, 210], RIM_SHADE = params.get('style') === 'classic' ? [0, 0, 0] : [58, 34, 26];   // EDGE = outline marker in packed-pixel arrays
 // ?style=classic = the original look (one navy outline everywhere, no drop shadows / grain / window light)
 const CLASSIC = params.get('style') === 'classic';
 // Tinted outlines (32-bit style): each outline pixel is a dark version of the colour it borders, blended with
@@ -236,8 +237,9 @@ function pxCanvas_(px, w, h, art) {
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
       if (!body(x, y)) continue;
       const k = (y * w + x) * 4;
-      if (!body(x - 1, y - 1)) for (let c = 0; c < 3; c++) d[k + c] += (255 - d[k + c]) * RIM_LIGHT;
-      else if (!body(x + 1, y + 1)) for (let c = 0; c < 3; c++) d[k + c] *= 1 - RIM_DARK;
+      // warm light (cream highlight) and warm shade (toward brown), not white / black
+      if (!body(x - 1, y - 1)) for (let c = 0; c < 3; c++) d[k + c] += (RIM_LIT[c] - d[k + c]) * RIM_LIGHT;
+      else if (!body(x + 1, y + 1)) for (let c = 0; c < 3; c++) d[k + c] += (RIM_SHADE[c] - d[k + c]) * RIM_DARK;
     }
   }
   const c = canvas(w, h);
@@ -337,6 +339,11 @@ function detailHD_(X, w, h, view) {
     let x0 = -1, x1 = -1;
     for (let x = 0; x < w; x++) if (at(x, y) === hh) { if (x0 < 0) x0 = x; x1 = x; }
     if (x1 - x0 >= 8) for (let i = 3; i <= 5; i++) { set(x0 + i, y, 'L', 'h'); if (i < 5) set(x0 + i + 1, y - 1, 'L', 'h'); }
+  }
+  // softer folds: the shirt's lowest row sits in shade; hair gets a mid tone just above the hairline shadow
+  for (let y = 0; y < h - 1; y++) for (let x = 0; x < w; x++) {
+    if (at(x, y) === t && at(x, y + 1) !== t && at(x, y + 1) !== T && at(x, y + 1) !== CH('s')) X[y * w + x] = T;
+    if (at(x, y) === hh && at(x, y + 1) === CH('H') && y < brow) X[y * w + x] = CH('M');
   }
   // clothes: collar under the neck, belt + buckle at the waist, shine on the shoes
   for (let y = 1; y < h; y++) for (let x = 0; x < w; x++) {
@@ -475,7 +482,7 @@ function buildFrames(m) {
   const down = mod(DOWN, 'down'), up = mod(UP, 'up'), right = mod(RIGHT, 'right');
   const F = {}, hd = ART >= 2;
   if (hd) Object.assign(pal, { W: '#fdfcf6', H: shade(m.hair, 0.7), L: mixC(m.hair, '#ffffff', 0.28), C: mixC(m.shirt, '#ffffff', 0.4),
-    m: mixC(sk[1], '#a8505a', 0.35), B: shade(m.pants, 0.6), G: '#d8b24a', K: '#5a5470' });
+    m: mixC(sk[1], '#a8505a', 0.35), M: shade(m.hair, 0.85), B: shade(m.pants, 0.6), G: '#d8b24a', K: '#5a5470' });
   // stand/walk frames stretch at the hips (row 13), seated frames at the chest (row 9)
   const b = (k, rows, flip, row = 13, front = true) => {
     const r = buildMod(rows, m, row, front);
