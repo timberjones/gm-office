@@ -293,7 +293,7 @@ const DIVIDERS = [14, 23, 32];
 const GLASS_DOORS = [[8, 11], [17, 20], [26, 29], [43, 46]];      // wide sliding patio doors: centred on the small offices, conference one on its right side
 const DOOR_CELLS = GLASS_DOORS.flatMap(([a, b]) => Array.from({ length: b - a + 1 }, (_, i) => a + i));
 const BLOCK = { x0: 16, x1: 26, y0: 21, y1: 27, wall: 20 };        // closet (17-19) | washroom (21-25)
-const ROOM_DOORS = [{ x: 18, kind: 'supplies' }, { x: 22, kind: 'wc' }];
+const ROOM_DOORS = [{ x: 22, kind: 'wc' }];   // the closet has no door: nobody goes in
 const LUNCH_RUG = { x0: 36, y0: 19, x1: 41, y1: 26 };
 blockRect(0, 0, 5, 23);                                            // neighbours, above the corridor
 for (let x = 6; x < GX; x++) if (!DOOR_CELLS.includes(x)) block(x, 8);   // office wall with the glass doors
@@ -374,10 +374,9 @@ const SPOTS = {
   micro: { dur: [5, 8], spots: [{ x: 28, y: 22, face: 'left' }] },
   sink: { dur: [4, 6], spots: [{ x: 28, y: 24, face: 'left' }, { x: 28, y: 25, face: 'left' }] },
   wc: { dur: [25, 50], hide: true, spots: [{ x: 22, y: 20, face: 'down', door: 22 }] },
-  supplies: { dur: [4, 8], hide: true, spots: [{ x: 18, y: 20, face: 'down', door: 18 }] },
   island: { dur: [15, 30], icon: 'cup', spots: [{ x: 30, y: 22, face: 'right' }, { x: 33, y: 22, face: 'left' }] },
 };
-const ACTS = [['type', 44], ['call', 22], ['walkcall', 4], ['chat', 5], ['meeting', 2], ['coffee', 6], ['water', 3], ['fridge', 2], ['sink', 2], ['wc', 3], ['supplies', 1], ['island', 3]];
+const ACTS = [['type', 44], ['call', 22], ['walkcall', 4], ['chat', 5], ['meeting', 2], ['coffee', 6], ['water', 3], ['fridge', 2], ['sink', 2], ['wc', 3], ['island', 3]];
 const spotUser = (k, i) => SPOTS[k].spots[i] && SPOTS[k].spots[i].using;
 const DOCK = { x: 15, y: 27 };
 
@@ -468,9 +467,9 @@ const ROLES = {
     look: { hair: '#1a1a24', skin: 2, shirt: '#e8506a', pants: '#2f3a5c', style: 'long', build: 'small' } },
   ceo: { acts: DESKBOUND, talk: 0.5, fixed: true, in: [7.9, 8.4], out: [17.0, 17.6], lunch: 'desk',
     look: { hair: '#8a5a32', skin: 0, shirt: '#f4f4f0', pants: '#3a3f55', style: 'short', build: 'tall' } },
-  buyer: { talk: 3, acts: [['type', 26], ['call', 32], ['walkcall', 8], ['chat', 10], ['island', 5], ['coffee', 6], ['water', 3], ['fridge', 2], ['sink', 1], ['wc', 3], ['meeting', 1], ['supplies', 1]] },
+  buyer: { talk: 3, acts: [['type', 26], ['call', 32], ['walkcall', 8], ['chat', 10], ['island', 5], ['coffee', 6], ['water', 3], ['fridge', 2], ['sink', 1], ['wc', 3], ['meeting', 1]] },
   am: { talk: 1.5, acts: ACTS },
-  intern: { talk: 0, acts: [['type', 72], ['coffee', 6], ['water', 4], ['wc', 3], ['supplies', 3], ['fridge', 2], ['sink', 2]] },
+  intern: { talk: 0, acts: [['type', 72], ['coffee', 6], ['water', 4], ['wc', 3], ['fridge', 2], ['sink', 2]] },
   staff: { talk: 1, acts: ACTS },
   product: { talk: 1, fixed: true, days: ['tue', 'thu'], acts: ACTS, look: { hair: '#1a1a24', skin: 1, shirt: '#22b573', pants: '#2f3a5c', style: 'short' } },
   // HR: visits some days, sits at the CEO office's second desk or the dining table's bottom-middle seat, never talks
@@ -506,8 +505,11 @@ function makeWorker_(seat, i, role) {
     frames: v.frames, home: seat, sitAt: null,
     px: seat.x * C8, py: seat.y * C8, tx: seat.x, ty: seat.y, dir: 'down',
     pose: 'stand', seated: false, present: false, hidden: false, held: false, summon: null, headset: false, walkT: 0, bubble: null,
-    in: R0.in ? rnd(R0.in[0], R0.in[1]) : 7.9 + rnd(0, 1.2), out: R0.out ? rnd(R0.out[0], R0.out[1]) : 16.4 + rnd(0, 1.4),
-    lunch: 11.6 + rnd(0, 1.0), lunchLen: rnd(0.4, 0.75), lunchMode: R0.lunch || (chance(0.6) ? 'table' : 'out'), lunchDone: false,
+    // buyers all leave at 4 pm; everyone else between ~16:25 and 17:50
+    in: R0.in ? rnd(R0.in[0], R0.in[1]) : 7.9 + rnd(0, 1.2),
+    out: R0.out ? rnd(R0.out[0], R0.out[1]) : role === 'buyer' ? 16.0 + rnd(0, 0.1) : 16.4 + rnd(0, 1.4),
+    // lunch break inside 12:00-13:00 (execs and HR eat at their desk on their own clock); table/out/skip is picked daily in pickRoster
+    lunch: R0.lunch ? 11.6 + rnd(0, 1.0) : 12.0 + rnd(0, 0.2), lunchLen: 0, lunchMode: R0.lunch || 'table', lunchDone: false,
     headX: 0, headTop: 0,
   };
   if (role !== 'hr') seat.owner = w;   // HR's seat is chosen per day in pickRoster
@@ -540,6 +542,14 @@ function pickRoster() {
   const n = Math.min(rest.length, PEOPLE != null ? Math.max(0, PEOPLE - workers.filter(w => w.fixed && w.today).length) : Math.round(frac * rest.length));
   const order = rest.map(w => [r(), w]).sort((a, b) => a[0] - b[0]).map(p => p[1]);
   order.forEach((w, i) => { w.today = i < n; });
+  workers.forEach(w => {   // today's lunch plan: most people break 12-1 at the dining table or out; execs/HR eat at their desk
+    if (ROLES[w.role].lunch) { w.lunchLen = 0.4 + 0.35 * r(); return; }
+    w.lunch = 12.0 + 0.2 * r();
+    w.lunchLen = Math.min(13 - w.lunch, 0.5 + 0.35 * r());
+    const x = r();
+    w.lunchMode = x < 0.12 ? 'none' : x < 0.62 ? 'table' : 'out';   // ~12% skip lunch, the rest split table / out
+    w.lunchDone = false;
+  });
   workers.forEach(w => {   // shared seats: whose turn it is today
     if (w.variants.length < 2) return;
     w.v = w.variants[Math.floor(r() * w.variants.length)];
@@ -593,12 +603,12 @@ function* arrive(w) {
   yield* walkStraight(w, 0, row * C8);
   w.tx = 0; w.ty = row;
   yield* goHome(w);
-  if (chance(0.4)) say(w, pick(['smile', 'cup']), 1.6);
+  if (w.greeted !== rosterKey) { w.greeted = rosterKey; greet_(w, 'morning'); }   // first arrival of the day only, not back from lunch
   yield rnd(1, 3);
 }
 function* leave(w) {
   standUp(w); w.summon = null; yield 0.4;
-  if (chance(0.4)) say(w, 'smile', 1.4);
+  if (!(w.lunchMode === 'out' && lunchTime(w))) { greet_(w, 'bye'); yield 1.5; }   // done for the day (not just out for lunch)
   const row = chance(0.5) ? 25 : 26;
   yield* walkTo(w, 0, row);
   yield* walkStraight(w, hallX(), row * C8);
@@ -679,16 +689,19 @@ function* visit(w, kind) {
   spot.busy = null;
   yield* goHome(w);
 }
-// lunch at the big table (or at the desk if it is full)
+// lunch at the big table; if it's full they head out for lunch instead
 function* lunchAtTable(w) {
+  const open = () => LUNCH_SEATS.filter(s => !s.occ && !s.claimed && !(s.owner && s.owner.present));   // not HR's seat on her days
+  if (!open().length) { w.lunchMode = 'out'; return; }   // life() sees lunch + 'out' and walks them out
   standUp(w); yield 0.3;
   if (chance(0.5) && !SPOTS.micro.spots[0].busy) {
     const s = SPOTS.micro.spots[0]; s.busy = w;
     if (yield* walkTo(w, s.x, s.y)) { w.dir = 'down'; s.using = w; yield rnd(4, 7); s.using = null; }
     s.busy = null;
   }
-  const free = LUNCH_SEATS.filter(s => !s.occ && !s.claimed && !(s.owner && s.owner.present));   // not HR's seat on her days
-  const seat = free.length ? pick(free) : w.home;
+  const free = open();
+  if (!free.length) { w.lunchMode = 'out'; return; }   // filled up while they were at the microwave
+  const seat = pick(free);
   seat.claimed = true;
   const ok = yield* walkTo(w, seat.x, seat.y);
   seat.claimed = false;
@@ -898,7 +911,7 @@ function buildLayers() {
   // toilet on the right wall (bottom), facing left: tank against the wall, bowl pointing into the room
   R(wx1 - 4, wy1 - 18, 4, 11, OUT); R(wx1 - 3, wy1 - 17, 3, 9, '#f6f6f2');
   R(wx1 - 12, wy1 - 17, 9, 9, OUT); R(wx1 - 11, wy1 - 16, 8, 7, '#ffffff'); R(wx1 - 10, wy1 - 15, 6, 5, '#dce6ec'); P(wx1 - 11, wy1 - 16, OUT); P(wx1 - 11, wy1 - 10, OUT);
-  R(wx0 + 22, wy0 + 10, 6, 8, '#7fa6f0');                                                     // bath mat at the vanity
+  R(wx0 + 1, wy0, 6, 7, OUT); R(wx0 + 2, wy0 + 1, 4, 5, '#6b727c'); R(wx0 + 2, wy0 + 1, 4, 1, '#9aa4b0'); R(wx0 + 3, wy0 + 2, 2, 1, '#454b58');   // garbage can against the top wall
   for (const d of ROOM_DOORS) { R(d.x * C8 + 1, by - 1, 6, 4, OUT); R(d.x * C8 + 2, by, 4, 3, '#9a6a3c'); P(d.x * C8 + 5, by + 1, '#e9c46a'); }
   // outer walls
   const WALL = '#f2efe8';
@@ -1321,6 +1334,20 @@ async function fetchFeed() {
     const j = await r.json();
     if (j && j.ok && Array.isArray(j.feed)) feed = j;
   } catch (e) { /* keep the last good feed */ }
+}
+// Hello / goodbye: lines from the sheet's One-liners tab under User ID "morning" / "bye", else these defaults.
+const GREETINGS = {
+  morning: ['Good morning!', 'Morning, team!', 'Coffee first, then greatness.', "Let's make today count!", 'Rise and grind!'],
+  bye: ['Have a good night!', 'See you tomorrow!', "That's a wrap!", 'Bye everyone!', 'Off to touch some grass.'],
+};
+function greet_(w, kind) {
+  if (!CHAT || w.talk <= 0 || w.hidden) return;                  // interns and HR don't talk
+  if (speech && speech.greet && speech.t < 2.5) return;           // someone else is mid-greeting
+  const lines = speechFor_(kind);
+  let text = pick(lines.length ? lines : GREETINGS[kind]);
+  if (w.role === 'am') text = text.toUpperCase();                 // account managers are loud
+  w.bubble = null;
+  speech = { w, text, t: 0, life: 3 + text.length * 0.06, greet: true };
 }
 function speechFor_(uid) {
   if (!feed) return [];
