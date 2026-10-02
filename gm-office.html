@@ -293,7 +293,7 @@ const DIVIDERS = [14, 23, 32];
 const GLASS_DOORS = [[8, 11], [17, 20], [26, 29], [43, 46]];      // wide sliding patio doors: centred on the small offices, conference one on its right side
 const DOOR_CELLS = GLASS_DOORS.flatMap(([a, b]) => Array.from({ length: b - a + 1 }, (_, i) => a + i));
 const BLOCK = { x0: 16, x1: 26, y0: 21, y1: 27, wall: 20 };        // closet (17-19) | washroom (21-25)
-const ROOM_DOORS = [{ x: 22, kind: 'wc' }];   // the closet has no door: nobody goes in
+const ROOM_DOORS = [{ x: 21, kind: 'wc' }];   // the closet has no door: nobody goes in
 const LUNCH_RUG = { x0: 36, y0: 19, x1: 41, y1: 26 };
 blockRect(0, 0, 5, 23);                                            // neighbours, above the corridor
 for (let x = 6; x < GX; x++) if (!DOOR_CELLS.includes(x)) block(x, 8);   // office wall with the glass doors
@@ -373,7 +373,7 @@ const SPOTS = {
   fridge: { dur: [3, 5], spots: [{ x: 32, y: 25, face: 'down' }] },
   micro: { dur: [5, 8], spots: [{ x: 28, y: 22, face: 'left' }] },
   sink: { dur: [4, 6], spots: [{ x: 28, y: 24, face: 'left' }, { x: 28, y: 25, face: 'left' }] },
-  wc: { dur: [25, 50], hide: true, spots: [{ x: 22, y: 20, face: 'down', door: 22 }] },
+  wc: { dur: [25, 50], hide: true, spots: [{ x: 21, y: 20, face: 'down', door: 21 }] },
   island: { dur: [15, 30], icon: 'cup', spots: [{ x: 30, y: 22, face: 'right' }, { x: 33, y: 22, face: 'left' }] },
 };
 const ACTS = [['type', 44], ['call', 22], ['walkcall', 4], ['chat', 5], ['meeting', 2], ['coffee', 6], ['water', 3], ['fridge', 2], ['sink', 2], ['wc', 3], ['island', 3]];
@@ -992,7 +992,7 @@ function buildLayers() {
   // toilet on the right wall (bottom), facing left: tank against the wall, bowl pointing into the room
   R(wx1 - 4, wy1 - 18, 4, 11, OUT); R(wx1 - 3, wy1 - 17, 3, 9, '#f6f6f2');
   R(wx1 - 12, wy1 - 17, 9, 9, OUT); R(wx1 - 11, wy1 - 16, 8, 7, '#ffffff'); R(wx1 - 10, wy1 - 15, 6, 5, '#dce6ec'); P(wx1 - 11, wy1 - 16, OUT); P(wx1 - 11, wy1 - 10, OUT);
-  R(wx0 + 1, wy0, 6, 7, OUT); R(wx0 + 2, wy0 + 1, 4, 5, '#6b727c'); R(wx0 + 2, wy0 + 1, 4, 1, '#9aa4b0'); R(wx0 + 3, wy0 + 2, 2, 1, '#454b58');   // garbage can against the top wall
+  R(wx0 + 13, wy0, 6, 7, OUT); R(wx0 + 14, wy0 + 1, 4, 5, '#6b727c'); R(wx0 + 14, wy0 + 1, 4, 1, '#9aa4b0'); R(wx0 + 15, wy0 + 2, 2, 1, '#454b58');   // garbage can on the top wall, right of the door
   for (const d of ROOM_DOORS) { R(d.x * C8 + 1, by - 1, 6, 4, OUT); R(d.x * C8 + 2, by, 4, 3, '#9a6a3c'); P(d.x * C8 + 5, by + 1, '#e9c46a'); }
   // outer walls
   const WALL = '#f2efe8';
