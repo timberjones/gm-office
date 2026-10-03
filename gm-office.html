@@ -1537,11 +1537,13 @@ const QR_ROWS = SECRET_QR.split(' ').map(h => parseInt(h, 16)), QR_N = QR_ROWS.l
 const qrDark_ = (x, y) => x >= 0 && y >= 0 && x < QR_N && y < QR_N && !!(QR_ROWS[y] & (1 << (QR_N - 1 - x)));
 // the picture: [dark, light] shades at (u, v) in 0..1 across the plate
 function qrPicture_(u, v) {
-  const hill = 0.6 + 0.07 * Math.sin(u * 7 + 0.6) + 0.04 * Math.sin(u * 17);
-  if (v > 0.86) return ['#2b1f1a', '#f3e2c0'];                                  // ground
-  if (v > hill) return ['#26402f', '#e8eed8'];                                  // green hills
-  if (Math.hypot(u - 0.66, v - 0.38) < 0.19) return ['#7a3018', '#f9dca4'];     // rust sun, mustard glow
-  return v < 0.3 ? ['#4a2e1c', '#f8ecd6'] : ['#5a2e1a', '#f9e6c6'];             // sky: cream, warming towards the horizon
+  const near = 0.66 + 0.06 * Math.sin(u * 6 + 0.4) + 0.03 * Math.sin(u * 15), far = 0.55 + 0.05 * Math.sin(u * 9 + 2.1), sun = Math.hypot(u - 0.64, v - 0.4);
+  if (v > 0.88) return ['#2b1f1a', '#f3e2c0'];                                  // ground
+  if (v > near) return ['#24402c', '#e4edd2'];                                  // near hills
+  if (v > far) return ['#3a4a2a', '#eef0d6'];                                   // far ridge, olive
+  if (sun < 0.17) return ['#8a2e14', '#fbd98c'];                                // the sun: rust on gold
+  if (sun < 0.25) return ['#7a3a18', '#fbe3b0'];                                //   its warm halo
+  return v < 0.28 ? ['#3e2a3a', '#f6ead8'] : ['#5a2e1a', '#f9e4c4'];            // sky: plum-dusk up top, warm cream lower
 }
 const qrArt = {};   // 'm/Q' -> canvas
 function secretArt_(m, QR_Q) {   // the plate (QR + a light border of QR_Q modules) at m screen px per module
@@ -1562,7 +1564,17 @@ function secretArt_(m, QR_Q) {   // the plate (QR + a light border of QR_Q modul
     } else if (Math.abs(mx - align[0]) <= 2 && Math.abs(my - align[1]) <= 2) {   // small target
       const r = nrm(fx - align[0] - 0.5, fy - align[1] - 0.5);
       dark = r <= 0.5 || (r > 1.5 && r <= 2.5);
-    } else jitter = dark ? 1 : 0.94 + 0.06 * hash(mx + 40, my * 3 + 7);   // mosaic: light tiles vary a touch (dark ones stay dark)
+    } else {
+      jitter = dark ? 1 : 0.94 + 0.06 * hash(mx + 40, my * 3 + 7);   // mosaic: light tiles vary a touch (dark ones stay dark)
+      if (m >= 3) {   // liquid: only the corner triangle of a module ever changes, its centre (what phones read) never does
+        const u = fx - mx, v = fy - my, sx = u < 0.5 ? -1 : 1, sy = v < 0.5 ? -1 : 1;
+        if ((sx < 0 ? u : 1 - u) + (sy < 0 ? v : 1 - v) < 0.34) {
+          const a = qrDark_(mx + sx, my), b = qrDark_(mx, my + sy), cc = qrDark_(mx + sx, my + sy);
+          if (dark && !a && !b) dark = false;               // round off a corner sticking out
+          else if (!dark && a && b && cc) dark = true;      // fill a corner tucked in between dark ones
+        }
+      }
+    }
     const [dc, lc] = qrPicture_((mx + QR_Q + 0.5) / QR_ALL, (my + QR_Q + 0.5) / QR_ALL), col = hex(dark ? dc : lc);
     const k = (py * S + px) * 4;
     d[k] = Math.min(255, col[0] * jitter); d[k + 1] = Math.min(255, col[1] * jitter); d[k + 2] = Math.min(255, col[2] * jitter); d[k + 3] = 255;
@@ -1570,17 +1582,18 @@ function secretArt_(m, QR_Q) {   // the plate (QR + a light border of QR_Q modul
   q.putImageData(img, 0, 0);
   return (qrArt[key] = c);
 }
-const ART_CELLS = { x: 45 * C8, y: 15 * C8, w: 3 * C8, h: 3 * C8 };   // the art's spot (art px, office coords)
+const ART_CELLS = { x: 45 * C8, y: 15 * C8, w: 3 * C8, h: 3 * C8 }, ART_SIZE = 26;   // the art's cells (art px, office coords); 26 art px with its frame
 let artFix = null;   // small canvas to redraw people standing in front of the art
 function drawSecretArt_() {
-  // biggest whole-pixel module that fits; a 2-module light border when that doesn't shrink the modules (else 1)
-  const A = ART_CELLS, box = A.w * scale, m1 = Math.floor((box - 2) / (QR_N + 2)), m2 = Math.floor((box - 2) / (QR_N + 4));
-  const Q = m2 === m1 ? 2 : 1, m = Math.max(1, m1), size = (QR_N + Q * 2) * m;
-  const bx = Math.round((OX + A.x) * scale), by = Math.round((OY + A.y) * scale);
-  const x = bx + Math.round((box - size) / 2), y = by + Math.round((box - size) / 2), f = Math.max(2, Math.round(scale * 0.75));
+  // 26 art px framed, its right edge on the right wall, centred on the 3 cells vertically. Biggest whole-pixel module
+  // that fits inside a 2 px frame; a 2-module light border when that doesn't shrink the modules (else 1)
+  const A = ART_CELLS, outer = Math.round(ART_SIZE * scale), inner = outer - 4;
+  const m1 = Math.floor(inner / (QR_N + 2)), m2 = Math.floor(inner / (QR_N + 4)), Q = m2 === m1 ? 2 : 1, m = Math.max(1, m1), size = (QR_N + Q * 2) * m;
+  const ox = Math.round((OX + A.x + A.w) * scale) - outer, oy = Math.round((OY + A.y + A.h / 2) * scale - outer / 2);
+  const x = ox + Math.floor((outer - size) / 2), y = oy + Math.floor((outer - size) / 2), f = x - ox - 1;   // frame = what's left round the plate
   const c = mctx;
   c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.imageSmoothingEnabled = false;
-  c.fillStyle = 'rgba(40,20,8,0.28)'; c.fillRect(x - f + scale, y - f + scale, size + f * 2, size + f * 2);   // shadow
+  c.fillStyle = 'rgba(40,20,8,0.28)'; c.fillRect(x - f - 1, y - f + scale, size + f * 2 + 2, size + f * 2 + 2);   // shadow (straight down: it's on the wall)
   c.fillStyle = '#33251f'; c.fillRect(x - f - 1, y - f - 1, size + f * 2 + 2, size + f * 2 + 2);          // frame: outline,
   c.fillStyle = '#8a5a32'; c.fillRect(x - f, y - f, size + f * 2, size + f * 2);                          // wood,
   c.fillStyle = '#b07a48'; c.fillRect(x - f, y - f, size + f * 2, Math.max(1, f >> 1));                   // lit top edge
