@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GM Office Player</title>
+<style>
+  :root {
+    --bg: #f4ecdd; --card: #fffaf0; --ink: #33251f; --muted: #7a6656; --line: #e0d2bc;
+    --accent: #d6a24a; --accent-ink: #33251f; --live: #22b573; --warn: #e8a020; --floor: #d7a873; --floor2: #c9965f;
+    --pad: #efe3cf; --pad-press: #d6a24a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1e1714; --card: #2a211c; --ink: #f3e9da; --muted: #b5a291; --line: #3d3029;
+      --accent: #e0b25a; --accent-ink: #1e1714; --pad: #3a2e27; --pad-press: #e0b25a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1e1714; --card: #2a211c; --ink: #f3e9da; --muted: #b5a291; --line: #3d3029;
+    --accent: #e0b25a; --accent-ink: #1e1714; --pad: #3a2e27; --pad-press: #e0b25a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.4 "Segoe UI", system-ui, -apple-system, sans-serif; }
+  body { min-height: 100vh; padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 8px; }
+  button { font: inherit; color: inherit; }
+  .hidden { display: none !important; }
+
+  /* ---- pick who you are */
+  #pick { max-width: 420px; margin: 8vh auto 0; }
+  #pick p { color: var(--muted); margin: 0 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  #pick form { display: flex; gap: 8px; }
+  #pick input { flex: 1; min-width: 0; font: inherit; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+  .btn { border: 0; border-radius: 8px; padding: 10px 16px; background: var(--accent); color: var(--accent-ink); font-weight: 600; cursor: pointer; }
+  .btn.ghost { background: transparent; border: 1px solid var(--line); color: var(--ink); font-weight: 500; }
+  .or { text-align: center; color: var(--muted); margin: 14px 0; font-size: 0.9rem; }
+  #newBtn { width: 100%; }
+  #again { margin-top: 14px; font-size: 0.9rem; color: var(--muted); }
+  #again button { background: none; border: 0; padding: 0; color: var(--ink); text-decoration: underline; cursor: pointer; }
+  #pickErr { color: #d9453b; font-size: 0.9rem; margin-top: 8px; min-height: 1.2em; }
+
+  /* ---- play */
+  #play { max-width: 960px; margin: 0 auto; }
+  .top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+  .who { font-weight: 700; font-size: 1.1rem; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; padding: 4px 10px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); }
+  .chip.live .dot { background: var(--live); }
+  .top .spacer { flex: 1; }
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 720px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+  .stage { position: relative; border-radius: 12px; overflow: hidden; border: 1px solid var(--line);
+    background: repeating-linear-gradient(0deg, var(--floor) 0 14px, var(--floor2) 14px 16px); }
+  #avatar { display: block; width: 100%; aspect-ratio: 4 / 3; image-rendering: pixelated; }
+  @media (max-width: 720px) { #avatar { aspect-ratio: 16 / 10; } }   /* phones: shorter, so the d-pad stays up */
+  .where { position: absolute; left: 10px; bottom: 10px; font-size: 0.85rem; background: rgba(30, 20, 15, 0.72); color: #fff6e6; padding: 3px 9px; border-radius: 6px; }
+  #map { display: block; width: 100%; image-rendering: pixelated; border-radius: 8px; margin-top: 10px; border: 1px solid var(--line); }
+  .hint { font-size: 0.82rem; color: var(--muted); margin-top: 6px; }
+
+  /* d-pad */
+  .pad { display: grid; grid-template-columns: repeat(3, 64px); grid-template-rows: repeat(3, 64px); gap: 6px; justify-content: center; margin: 14px auto 0;
+    touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  .pad button { border: 1px solid var(--line); border-radius: 12px; background: var(--pad); font-size: 1.5rem; cursor: pointer; touch-action: none; display: flex; align-items: center; justify-content: center; }
+  .pad button.on { background: var(--pad-press); color: var(--accent-ink); }
+  .pad .sit { font-size: 0.85rem; font-weight: 600; border-radius: 50%; }
+  .pad .up { grid-area: 1 / 2; } .pad .left { grid-area: 2 / 1; } .pad .sit { grid-area: 2 / 2; } .pad .right { grid-area: 2 / 3; } .pad .down { grid-area: 3 / 2; }
+
+  /* dress up */
+  .looks .row { margin-bottom: 14px; }
+  .opts { display: flex; flex-wrap: wrap; gap: 6px; }
+  .sw { width: 32px; height: 32px; border-radius: 8px; border: 2px solid var(--line); cursor: pointer; padding: 0; }
+  .sw.sel { border-color: var(--ink); box-shadow: 0 0 0 2px var(--card) inset; }
+  .sw.none { background: repeating-linear-gradient(45deg, var(--card) 0 5px, var(--line) 5px 7px); }
+  .seg { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 0.9rem; }
+  .seg.sel { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  .seg:disabled { opacity: 0.4; cursor: default; }
+  .saved { font-size: 0.82rem; color: var(--muted); min-height: 1.2em; }
+</style>
+</head>
+<body>
+
+<main id="pick" class="hidden">
+  <h1>GM Office</h1>
+  <p>Walk your character around the office TV and dress them up.</p>
+  <div class="card">
+    <h2>Your user id</h2>
+    <form id="idForm" autocomplete="off">
+      <input id="idInput" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="e.g. 1111" aria-label="User id">
+      <button class="btn" type="submit">Go</button>
+    </form>
+    <div id="pickErr"></div>
+    <div class="or">or</div>
+    <button id="newBtn" class="btn ghost" type="button">I'm new here</button>
+    <div id="again" class="hidden">Last time: <button id="againBtn" type="button"></button></div>
+  </div>
+</main>
+
+<main id="play" class="hidden">
+  <div class="top">
+    <span class="who" id="who"></span>
+    <span class="chip" id="status"><span class="dot"></span><span id="statusText">Connecting…</span></span>
+    <span class="spacer"></span>
+    <button class="btn ghost" id="switchBtn" type="button">Switch person</button>
+  </div>
+  <div class="grid">
+    <section>
+      <div class="stage">
+        <canvas id="avatar" width="320" height="240"></canvas>
+        <span class="where" id="where"></span>
+      </div>
+      <div class="pad" id="pad">
+        <button class="up" data-dir="up" aria-label="Up">▲</button>
+        <button class="left" data-dir="left" aria-label="Left">◀</button>
+        <button class="sit" id="sitBtn" aria-label="Sit or stand">Sit</button>
+        <button class="right" data-dir="right" aria-label="Right">▶</button>
+        <button class="down" data-dir="down" aria-label="Down">▼</button>
+      </div>
+      <div class="hint" style="text-align:center">Tap or hold the arrows · on a keyboard: arrows / WASD, Space to sit</div>
+      <canvas id="map"></canvas>
+      <div class="hint">Where you are in the office. Watch the TV to see yourself walk.</div>
+    </section>
+    <section class="card looks" id="looks"></section>
+  </div>
+</main>
+
+<script type="module">
+// GM Office player page. Pick a user id (or start as someone new), then walk your character around the office TV
+// with the arrow keys or the on-screen d-pad, and dress them up. Everything goes through the GM Office relay
+// (relay/, a Cloudflare Worker) to every open gm-office.html. Close this page (or leave it in the background for a
+// minute) and your character goes back to its routine, or walks out if it isn't in today.
+// The people sprites and the office layout come straight from gm-office.html (the code between its @shared
+// markers), so this page always draws and walks exactly like the office does.
+const RELAY_URL = 'wss://gm-office-relay.tj-c25.workers.dev/ws';
+const MANUAL_WALK = 48;   // px per second, same as a driven character on the TV
+const DIRV = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
+const $ = id => document.getElementById(id);
+const store = { get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
+
+// ---- the office's own people + layout code
+async function loadShared() {
+  const html = await (await fetch('gm-office.html', { cache: 'no-cache' })).text();
+  const parts = [...html.matchAll(/\/\/ @shared-begin[^\n]*\n([\s\S]*?)\/\/ @shared-end/g)].map(m => m[1]);
+  if (parts.length < 3) throw new Error('shared code not found in gm-office.html');
+  const el = document.createElement('script');
+  el.textContent = parts.join('\n');
+  document.head.appendChild(el);   // classic script: its consts (SEATS, bfs, buildFrames, KNOWN ...) become globals
+}
+
+// ---- who you are
+function knownSeat(uid) {   // [seat, default look] for an id the office knows, or null
+  for (const [code, list] of Object.entries(KNOWN)) {
+    const p = list.find(p => String(p.uid) === String(uid));
+    if (!p) continue;
+    const seat = deskSeats.find(s => s.code === code);
+    return seat ? [seat, p.look || ROLES[seat.role].look] : null;
+  }
+  return null;
+}
+const SEX_STYLES = { m: ['short', 'spiky'], f: ['long', 'bun'] };
+function startLook(uid) {
+  const k = knownSeat(uid), base = k && k[1] ? k[1] : randomLook();
+  const l = Object.assign({ hat: null, beard: false, goatee: false, build: null }, base);
+  if (!l.sex) l.sex = SEX_STYLES.f.includes(l.style) ? 'f' : 'm';
+  return l;
+}
+let me = null;   // { uid, home, look, frames, tx, ty, px, py, q, seat, dir, walkT, lookTouched }
+const NEW_ID = '1111';   // the example id: typing it means "make me someone new" (no staff member has it)
+const newId = () => '9' + String(Math.floor(Math.random() * 1e6)).padStart(6, '0');
+function startAs(uid) {
+  uid = String(uid).replace(/\D/g, '').slice(0, 8);
+  if (!uid) { $('pickErr').textContent = 'Type a user id (numbers only).'; return; }
+  if (uid === NEW_ID) uid = newId();
+  store.set('gmOfficeUid', uid);
+  history.replaceState(null, '', '?id=' + uid);
+  const k = knownSeat(uid), home = k ? k[0] : null, look = startLook(uid);
+  me = { uid, home, look, frames: buildFrames(look), q: [], seat: null, dir: 'right', walkT: 0, lookTouched: false, lookFromRelay: false };
+  if (home) Object.assign(me, { tx: home.x, ty: home.y, seat: home, dir: home.face });   // known: you're at your desk (the TV walks you in if you weren't)
+  else Object.assign(me, { tx: 0, ty: 25 });                                              // new: you come in through the door
+  me.px = me.tx * C8; me.py = me.ty * C8;
+  $('who').textContent = (home ? 'User ' : 'New person ') + uid;
+  $('pick').classList.add('hidden'); $('play').classList.remove('hidden');
+  buildLooksUI(); drawMap(); updateWhere();
+  relay.stop = false; relayConnect();
+}
+function showPick() {
+  relayHangUp();
+  me = null; held = [];
+  history.replaceState(null, '', location.pathname);
+  $('play').classList.add('hidden'); $('pick').classList.remove('hidden');
+  const last = store.get('gmOfficeUid');
+  $('again').classList.toggle('hidden', !last);
+  if (last) $('againBtn').textContent = 'continue as ' + last;
+  $('idInput').value = ''; $('pickErr').textContent = '';
+}
+
+// ---- walking (the same grid and rules as the office)
+const walkable = (x, y) => x >= 0 && y >= 0 && x < GX && y < GY && !blocked[idx(x, y)] && !isSeat[idx(x, y)];
+const seatAt = (x, y) => SEATS.find(s => s.x === x && s.y === y);
+let held = [];   // directions held (keys or d-pad), last pressed last
+const heldDir = () => held[held.length - 1] || null;
+function press(dir) { if (!me) return; held = held.filter(d => d !== dir).concat(dir); queueStep(dir); }
+function unpress(dir) { held = held.filter(d => d !== dir); }
+function queueStep(dir) {
+  if (me.q.length >= 2) return;   // taps can queue one step ahead, no more
+  const [ax, ay] = me.q.length ? me.q[me.q.length - 1] : [me.tx, me.ty], nx = ax + DIRV[dir][0], ny = ay + DIRV[dir][1];
+  if (walkable(nx, ny)) { me.dir = dir; me.q.push([nx, ny]); send({ t: 'step', x: nx, y: ny, dir, sit: false }); }
+  else if (me.dir !== dir || me.seat) {   // bumped into something: turn to face it (and get up, if sitting)
+    me.dir = dir;
+    if (!me.q.length) { me.seat = null; send({ t: 'step', x: me.tx, y: me.ty, dir, sit: false }); }
+  }
+}
+function sitOrStand() {
+  if (!me || me.q.length) return;
+  if (me.seat) { me.seat = null; send({ t: 'step', x: me.tx, y: me.ty, dir: me.dir, sit: false }); updateWhere(); return; }
+  for (const d of [me.dir, ...Object.keys(DIRV).filter(d => d !== me.dir)]) {   // the seat you're facing first
+    const s = seatAt(me.tx + DIRV[d][0], me.ty + DIRV[d][1]);
+    if (!s) continue;
+    me.q.push([s.x, s.y, s]); send({ t: 'step', x: s.x, y: s.y, dir: s.face, sit: true });
+    return;
+  }
+  flashWhere('No seat next to you');
+}
+function walk(dt) {
+  if (!me.q.length && heldDir()) queueStep(heldDir());
+  if (!me.q.length) return;
+  const [nx, ny, seat] = me.q[0], gx = nx * C8, gy = ny * C8, dx = gx - me.px, dy = gy - me.py, st = MANUAL_WALK * dt;
+  me.seat = null; me.walkT += dt;
+  if (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) me.dir = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+  if (Math.abs(dx) + Math.abs(dy) <= st) {
+    me.px = gx; me.py = gy; me.tx = nx; me.ty = ny; me.q.shift();
+    if (seat && !me.q.length) { me.seat = seat; me.dir = seat.face; }
+    updateWhere();
+  } else {
+    me.px += Math.sign(dx) * Math.min(st, Math.abs(dx));
+    me.py += Math.sign(dy) * Math.min(st, Math.abs(dy));
+  }
+}
+
+// ---- where am I (a word, and the little map)
+function placeName(x, y, seat) {
+  if (seat) {
+    if (me.home && seat === me.home) return 'At your desk';
+    return { desk: 'At a desk', meet: 'In the meeting room', lunch: 'At the lunch table', bar: 'At the bar table' }[seat.kind] || 'Sitting';
+  }
+  if (x <= 5) return 'At the entrance';
+  if (y <= 7) return x >= 33 ? 'In the meeting room' : 'In an office';
+  if (y >= 21 && x >= 27 && x <= 34) return 'In the kitchen';
+  if (y >= 19 && x >= 35 && x <= 42) return 'By the lunch table';
+  if (y >= 19 && x < 16) return 'Near the entrance';
+  return 'Walking around the office';
+}
+let flashT = 0;
+function updateWhere() { if (me && performance.now() > flashT) $('where').textContent = placeName(me.tx, me.ty, me.seat); }
+function flashWhere(t) { $('where').textContent = t; flashT = performance.now() + 1500; setTimeout(updateWhere, 1600); }
+let mapBase = null;
+function drawMap() {
+  const K = 6, c = $('map');
+  c.width = GX * K; c.height = GY * K;
+  if (!mapBase) {
+    mapBase = document.createElement('canvas'); mapBase.width = c.width; mapBase.height = c.height;
+    const m = mapBase.getContext('2d');
+    m.fillStyle = '#8a8d96'; m.fillRect(0, 0, c.width, c.height);
+    for (let y = 0; y < GY; y++) for (let x = 0; x < GX; x++) {
+      const i = idx(x, y);
+      m.fillStyle = isSeat[i] ? '#e8cf9a' : blocked[i] ? (x < 6 ? '#8a8d96' : '#6b5040') : (x < 6 ? '#cfc6b8' : '#d7a873');
+      m.fillRect(x * K, y * K, K, K);
+    }
+    m.fillStyle = 'rgba(255,255,255,0.35)';
+    for (const [x0, x1] of GLASS_DOORS) m.fillRect(x0 * K, 8 * K, (x1 - x0 + 1) * K / 2, K);
+  }
+}
+function renderMap() {
+  const K = 6, c = $('map'), m = c.getContext('2d');
+  m.drawImage(mapBase, 0, 0);
+  const x = me.px / C8 * K + K / 2, y = me.py / C8 * K + K / 2, r = K * 0.85 + Math.sin(performance.now() / 200) * 0.8;
+  m.fillStyle = '#33251f'; m.beginPath(); m.arc(x, y, r + 1.5, 0, Math.PI * 2); m.fill();
+  m.fillStyle = '#f5c542'; m.beginPath(); m.arc(x, y, r, 0, Math.PI * 2); m.fill();
+}
+
+// ---- your character, big
+function renderAvatar(t) {
+  const c = $('avatar'), dpr = window.devicePixelRatio || 1, W = Math.round(c.clientWidth * dpr), H = Math.round(c.clientHeight * dpr);
+  if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+  const g2 = c.getContext('2d'); g2.clearRect(0, 0, W, H); g2.imageSmoothingEnabled = false;
+  const F = me.frames, walking = me.q.length > 0;
+  let f;
+  if (me.seat) {
+    const s = me.seat, b = s.kind === 'desk' && ((t / 400) | 0) % 2 ? 'B' : 'A';   // typing at a desk
+    f = s.face === 'right' ? F['sitRight' + b] : s.face === 'left' ? F['sitLeft' + b] : s.face === 'down' ? F.sitDown : F['sitUp' + b];
+  } else {
+    let k = walking ? ['', 'A', '', 'B'][Math.floor(me.walkT * 7) % 4] : '';
+    if ((me.dir === 'left' || me.dir === 'right') && k === 'B') k = 'A';
+    f = F[me.dir + k];
+  }
+  const a = f.art || 1, fw = f.width / a, fh = f.height / a;      // art pixels
+  const S = Math.max(2, Math.floor(Math.min(W / 26, H / 30)));   // screen px per art pixel
+  const x = Math.round((W - fw * S) / 2), y = Math.round(H * 0.84 - fh * S) - (!walking && !me.seat && ((t / 900) | 0) % 2 ? S / 2 : 0);   // idle: a slow breath
+  g2.fillStyle = 'rgba(40,20,8,0.25)';
+  g2.beginPath(); g2.ellipse(W / 2 + S, H * 0.84 - S, 6 * S, 2.2 * S, 0, 0, Math.PI * 2); g2.fill();
+  if (me.seat) drawChair(g2, me.seat, x, y, fh, S);
+  g2.drawImage(f, x, y, fw * S, fh * S);
+}
+function drawChair(g2, s, x, y, fh, S) {   // a simple chair in the seat's colour, behind the sitting sprite (art px offsets)
+  const box = (bx, by, bw, bh, col) => { g2.fillStyle = '#33251f'; g2.fillRect(x + (bx - 1) * S, y + (by - 1) * S, (bw + 2) * S, (bh + 2) * S); g2.fillStyle = col; g2.fillRect(x + bx * S, y + by * S, bw * S, bh * S); };
+  const col = s.chair || '#bab3a8', dark = shade(col, 0.8);
+  if (s.face === 'right' || s.face === 'left') {
+    const fx = (bx, bw) => s.face === 'right' ? bx : 14 - bx - bw;   // mirror for facing left
+    box(fx(2, 3), fh - 12, 3, 10, dark);                             // backrest, behind their back
+    box(fx(3, 9), fh - 5, 9, 2, col);                                // seat under their hips
+    box(fx(4, 1), fh - 3, 1, 3, '#3e3833'); box(fx(10, 1), fh - 3, 1, 3, '#3e3833');   // legs
+  } else box(1, s.face === 'down' ? 4 : 8, 12, s.face === 'down' ? 10 : 7, dark);   // back of the chair behind (or in front of) them
+}
+
+// ---- dress up
+const HAT_COLS = ['#2a3a6c', '#d9453b', '#22b573', '#2a2238', '#ec8f2b', '#f3ecdf', '#8b5cf6'];
+function buildLooksUI() {
+  const L = me.look, root = $('looks');
+  root.innerHTML = '';
+  const row = (title, build) => { const r = document.createElement('div'); r.className = 'row'; r.innerHTML = `<h2>${title}</h2>`; const o = document.createElement('div'); o.className = 'opts'; build(o); r.appendChild(o); root.appendChild(r); };
+  const swatches = (o, cols, get, set, none) => {
+    if (none) { const b = document.createElement('button'); b.className = 'sw none' + (get() == null ? ' sel' : ''); b.title = 'None'; b.setAttribute('aria-label', 'None'); b.onclick = () => set(null); o.appendChild(b); }
+    for (const col of cols) { const b = document.createElement('button'); b.className = 'sw' + (get() === col ? ' sel' : ''); b.style.background = col; b.setAttribute('aria-label', col); b.onclick = () => set(col); o.appendChild(b); }
+  };
+  const segs = (o, items, get, set, disabled) => {
+    for (const [val, label] of items) { const b = document.createElement('button'); b.className = 'seg' + (get() === val ? ' sel' : ''); b.textContent = label; b.disabled = !!(disabled && disabled(val)); b.onclick = () => set(val); o.appendChild(b); }
+  };
+  const upd = patch => { Object.assign(me.look, patch); lookChanged(); };
+  row('Body', o => segs(o, [['m', 'Male'], ['f', 'Female']], () => L.sex, v => {
+    const p = { sex: v };
+    if (!SEX_STYLES[v].includes(L.style)) p.style = SEX_STYLES[v][0];
+    if (v === 'f') Object.assign(p, { beard: false, goatee: false });
+    upd(p);
+  }));
+  row('Height', o => segs(o, [['small', 'Short'], [null, 'Normal'], ['tall', 'Tall']], () => L.build || null, v => upd({ build: v })));
+  row('Skin', o => swatches(o, SKINS.map(s => s[0]), () => SKINS[L.skin][0], col => upd({ skin: SKINS.findIndex(s => s[0] === col) })));
+  row('Hair', o => segs(o, [['short', 'Short'], ['spiky', 'Spiky'], ['long', 'Long'], ['bun', 'Bun']], () => L.style, v => upd({ style: v })));
+  row('Hair colour', o => swatches(o, [...new Set(HAIRS), '#d9d4cc', '#c0466e', '#4a6fd0'], () => L.hair, col => upd({ hair: col })));
+  row('Facial hair', o => segs(o, [['none', 'None'], ['beard', 'Beard'], ['goatee', 'Goatee']], () => L.beard ? 'beard' : L.goatee ? 'goatee' : 'none',
+    v => upd({ beard: v === 'beard', goatee: v === 'goatee' }), v => L.sex === 'f' && v !== 'none'));
+  row('Cap', o => swatches(o, HAT_COLS, () => L.hat || null, col => upd({ hat: col }), true));
+  row('Shirt', o => swatches(o, [...new Set(SHIRTS)], () => L.shirt, col => upd({ shirt: col })));
+  row('Pants', o => swatches(o, [...new Set(PANTS)], () => L.pants, col => upd({ pants: col })));
+  const s = document.createElement('div'); s.className = 'saved'; s.id = 'saved'; root.appendChild(s);
+}
+let lookT = 0;
+function lookChanged() {
+  me.lookTouched = true;
+  me.frames = buildFrames(me.look);
+  buildLooksUI();
+  $('saved').textContent = 'Saving…';
+  clearTimeout(lookT);
+  lookT = setTimeout(sendLook, 400);   // one save after you stop clicking
+}
+function sendLook() {
+  if (!me) return;
+  if (send({ t: 'look', look: me.look })) $('saved').textContent = 'Saved. It shows on the TV.';
+  else $('saved').textContent = 'Not connected yet; it saves as soon as you are.';
+  me.lookPending = !relay.ok;
+}
+
+// ---- the relay
+const relay = { ws: null, ok: false, wait: 1000, stop: false, hideT: 0 };
+function send(m) { if (!relay.ok) return false; try { relay.ws.send(JSON.stringify(m)); return true; } catch (e) { return false; } }
+function setStatus() {
+  const st = $('status'), live = relay.ok;
+  st.classList.toggle('live', live);
+  $('statusText').textContent = live ? 'Live on the office TV' : relay.stop ? 'Away' : 'Connecting…';
+}
+function relayConnect() {
+  if (!me || relay.ws || relay.stop) return;
+  let ws;
+  try { ws = new WebSocket(RELAY_URL + '?uid=' + me.uid); } catch (e) { return; }
+  relay.ws = ws; setStatus();
+  ws.onopen = () => {
+    relay.ok = true; relay.wait = 1000; setStatus();
+    send({ t: 'hello', x: me.tx, y: me.ty, dir: me.dir, sit: !!me.seat });
+    if (me.lookPending) sendLook();
+  };
+  ws.onmessage = e => {
+    if (e.data === 'pong') return;
+    let m; try { m = JSON.parse(e.data); } catch (er) { return; }
+    if (m.t !== 'state' || !me) return;
+    const saved = m.looks && m.looks[me.uid];
+    if (saved && !me.lookTouched) { me.look = Object.assign({ hat: null, beard: false, goatee: false, build: null, sex: 'm' }, saved); me.frames = buildFrames(me.look); buildLooksUI(); }
+    else if (!saved && !me.home && !me.lookTouched) sendLook();   // someone new: their starting look is what the TV shows
+  };
+  ws.onclose = () => {
+    relay.ok = false; relay.ws = null; setStatus();
+    if (!relay.stop && me) { setTimeout(relayConnect, relay.wait); relay.wait = Math.min(relay.wait * 2, 60000); }
+  };
+}
+function relayHangUp() { relay.stop = true; if (relay.ws) relay.ws.close(); relay.ws = null; relay.ok = false; }
+setInterval(() => send({ t: 'hb' }), 20000);   // still here (the TV lets go of a silent driver after 75 s)
+// in the background for a minute = away: hang up so your character goes back to its routine; back = walk in again
+document.addEventListener('visibilitychange', () => {
+  clearTimeout(relay.hideT);
+  if (!me) return;
+  if (document.hidden) relay.hideT = setTimeout(() => { relayHangUp(); setStatus(); }, 60000);
+  else if (relay.stop) { relay.stop = false; relayConnect(); }
+});
+
+// ---- input: keyboard and the d-pad (tap = one step, hold = keep walking)
+const KEY_DIR = { arrowup: 'up', w: 'up', arrowdown: 'down', s: 'down', arrowleft: 'left', a: 'left', arrowright: 'right', d: 'right' };
+addEventListener('keydown', e => {
+  if (!me || e.target.tagName === 'INPUT') return;
+  const k = e.key.toLowerCase(), dir = KEY_DIR[k];
+  if (dir || k === ' ') e.preventDefault();
+  if (e.repeat) return;
+  if (dir) press(dir); else if (k === ' ' || k === 'enter') sitOrStand();
+});
+addEventListener('keyup', e => { const dir = KEY_DIR[e.key.toLowerCase()]; if (dir) unpress(dir); });
+addEventListener('blur', () => { held = []; document.querySelectorAll('.pad .on').forEach(b => b.classList.remove('on')); });
+for (const b of document.querySelectorAll('.pad [data-dir]')) {
+  const dir = b.dataset.dir, up = () => { b.classList.remove('on'); unpress(dir); };
+  b.addEventListener('pointerdown', e => { e.preventDefault(); b.setPointerCapture(e.pointerId); b.classList.add('on'); press(dir); });
+  b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up); b.addEventListener('lostpointercapture', up);
+  b.addEventListener('contextmenu', e => e.preventDefault());
+}
+$('sitBtn').addEventListener('click', sitOrStand);
+$('idForm').addEventListener('submit', e => { e.preventDefault(); startAs($('idInput').value); });
+$('newBtn').addEventListener('click', () => startAs(newId()));
+$('againBtn').addEventListener('click', () => startAs(store.get('gmOfficeUid')));
+$('switchBtn').addEventListener('click', showPick);
+
+// ---- go
+let last = performance.now();
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if (!me) return;
+  walk(dt);
+  $('sitBtn').textContent = me.seat ? 'Stand' : 'Sit';
+  renderAvatar(now); renderMap();
+}
+try {
+  await loadShared();
+  const q = new URLSearchParams(location.search).get('id');
+  if (q) startAs(q); else showPick();
+  requestAnimationFrame(frame);
+} catch (e) {
+  document.body.innerHTML = '<p style="padding:16px">Couldn\'t load the office. Refresh to try again.</p>';
+  console.error(e);
+}
+</script>
+</body>
+</html>
