@@ -1526,23 +1526,41 @@ function drawProp(p) {
 // Secret QR on the silver storage unit's lid: scan it from the TV to open the player page (gm-user.html, via the
 // short link u.html). Each module is half an art pixel (one pixel of the 2x scene), dark grey on the brushed lid,
 // so from across the room it reads as a metal pattern; up close (~30-40 cm on a 1080p TV) a phone can scan it.
-// Drawn live after the cached sprite so no outline / rim / smoothing pass touches it. Only on the 2x scene (TVs):
-// at 1x a module can't be half a pixel, so smaller screens just get the plain lid.
+// Drawn live after the cached sprite so no outline / rim / smoothing pass touches it. That needs the 2x scene (a
+// full-screen 1080p+ TV); on smaller screens (laptops) drawSecretQrScreen_ puts it on a little metal plate over the
+// box instead, at whole screen pixels big enough to scan.
 // QR version 3-M of https://timberjones.github.io/gm-office/u, one hex number per row (29 modules, top bit = left).
 const SECRET_QR = '1fd2487f 10410541 17568f5d 1749ce5d 174fc45d 10528141 1fd5557f 00017300 14653325 18b63763 0973ab6d 102a7788 157c5161 1415b2e3 116926d1 00375270 1f4c1661 08b96b67 1f7aa299 07105150 1dd4d3fa 0019391d 1fd7ed51 10463712 174ef3fa 174bb99d 1751a093 1040b5c8 1fd99511';
 let secretQr = null;
-function drawSecretQr_(p) {
-  if (!(g === sceneCtx && SS >= 2)) return;
-  if (!secretQr) {   // 1 px per module; drawn at half size below
+function secretQr_() {   // 1 px per module, made once
+  if (!secretQr) {
     const rows = SECRET_QR.split(' ').map(h => parseInt(h, 16)), n = rows.length;
     secretQr = canvas(n, n);
     const q = secretQr.getContext('2d'); q.fillStyle = '#6b727c';   // the handles' grey: blends into the metal, still reads on a phone
     rows.forEach((v, y) => { for (let x = 0; x < n; x++) if (v & (1 << (n - 1 - x))) q.fillRect(x, y, 1, 1); });
   }
-  const [, gx, gy] = p, n = secretQr.width / 2;   // 14.5 art px
+  return secretQr;
+}
+function drawSecretQr_(p) {
+  if (!(g === sceneCtx && SS >= 2)) return;
+  const qr = secretQr_(), [, gx, gy] = p, n = qr.width / 2;   // 14.5 art px
   const x = gx * C8 + 4.5, y = gy * C8 + 3.5;      // centred on the lid, 3+ modules of light lid all round
   g.imageSmoothingEnabled = false;
-  g.drawImage(secretQr, x, y, n, n);
+  g.drawImage(qr, x, y, n, n);
+}
+// Smaller screens: the 1x scene can't hold half-pixel modules, so draw the QR on the screen canvas over the box, on a
+// lid-coloured plate, ~2.5 CSS px per module (a phone reads it from ~10-15 cm on a laptop). Bigger than the box there.
+function drawSecretQrScreen_() {
+  if (SS >= 2) return;
+  const p = PROPS.find(q => q[0] === 'silver'); if (!p) return;
+  const qr = secretQr_(), n = qr.width, m = Math.max(3, Math.round(2.5 * (window.devicePixelRatio || 1))), size = n * m, pad = 2 * m;
+  const cx = (OX + p[1] * C8 + p[3] * C8 / 2) * scale, cy = (OY + p[2] * C8 + 2 + (p[4] * C8 - 2) / 2) * scale;   // middle of the box
+  const x = Math.round(cx - size / 2), y = Math.round(cy - size / 2);
+  mctx.save(); mctx.setTransform(1, 0, 0, 1, 0, 0); mctx.imageSmoothingEnabled = false;
+  mctx.fillStyle = '#33251f'; mctx.fillRect(x - pad - 2, y - pad - 2, size + pad * 2 + 4, size + pad * 2 + 4);   // the plate's outline
+  mctx.fillStyle = '#d6dbe2'; mctx.fillRect(x - pad, y - pad, size + pad * 2, size + pad * 2);
+  mctx.drawImage(qr, x, y, size, size);
+  mctx.restore();
 }
 function drawPropRaw_(p) {
   const [k, gx, gy, w, h] = p, x = gx * C8, y = gy * C8, bottom = (gy + h) * C8;
@@ -2040,6 +2058,7 @@ function render() {
     mctx.globalCompositeOperation = 'soft-light'; mctx.fillStyle = 'rgba(255,176,110,0.20)'; mctx.fillRect(0, 0, cv.width, cv.height);
     mctx.globalCompositeOperation = 'source-over'; mctx.fillStyle = vig; mctx.fillRect(0, 0, cv.width, cv.height);
   }
+  drawSecretQrScreen_();
   drawSpeech();
 }
 function updateAmbient(dt) {
