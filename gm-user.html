@@ -69,7 +69,23 @@
   .seg.sel { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
   .seg:disabled { opacity: 0.4; cursor: default; }
   .saved { grid-column: 1 / -1; font-size: 0.72rem; color: var(--muted); min-height: 1.1em; }
+  .group { display: contents; }
+  .tabs { display: none; }
   @media (min-width: 600px) { .sw { width: 26px; height: 26px; } .seg { padding: 3px 10px; font-size: 0.85rem; } .looks { gap: 7px 12px; } }
+  /* phones: thumb-sized buttons; the settings come in 4 tabs (Body / Hair / Face / Clothes) beside the avatar */
+  @media (max-width: 599px) {
+    .looks { display: block; min-height: 250px; }   /* the tallest tab (Body), so the d-pad doesn't jump when you switch */
+    .tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+    .tab { flex: 1; min-width: 0; border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 8px 2px; font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+    .tab.sel { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+    .group { display: none; }
+    .group.on { display: block; }
+    .looks .lbl { margin: 6px 0 4px; }
+    .opts { gap: 6px; }
+    .sw { width: 38px; height: 38px; border-radius: 9px; }
+    .seg { min-height: 38px; padding: 6px 12px; font-size: 0.9rem; border-radius: 9px; }
+    .saved { margin-top: 6px; }
+  }
 
   /* d-pad */
   .pad { display: grid; grid-template-columns: repeat(3, 58px); grid-template-rows: repeat(3, 58px); gap: 5px; justify-content: center; margin: 12px auto 0;
@@ -77,6 +93,11 @@
   .pad button { border: 1px solid var(--line); border-radius: 12px; background: var(--pad); font-size: 1.4rem; cursor: pointer; touch-action: none; display: flex; align-items: center; justify-content: center; }
   .pad button.on { background: var(--pad-press); color: var(--accent-ink); }
   .pad .sit { font-size: 0.8rem; font-weight: 600; border-radius: 50%; }
+  @media (max-width: 599px) {   /* phones: a big d-pad for thumbs */
+    .pad { grid-template-columns: repeat(3, 76px); grid-template-rows: repeat(3, 76px); gap: 8px; margin-top: 16px; }
+    .pad button { font-size: 1.8rem; border-radius: 16px; }
+    .pad .sit { font-size: 0.95rem; }
+  }
   .pad .up { grid-area: 1 / 2; } .pad .left { grid-area: 2 / 1; } .pad .sit { grid-area: 2 / 2; } .pad .right { grid-area: 2 / 3; } .pad .down { grid-area: 3 / 2; }
 </style>
 </head>
@@ -294,13 +315,24 @@ const PALETTE = {
   pants: ['#2f3a5c', '#3b5a96', '#5a4a3a', '#6b6f7a'],
 };
 const withCurrent = (list, cur) => cur && !list.includes(cur) ? [cur, ...list] : list;
+const GROUPS = [['body', 'Body'], ['hair', 'Hair'], ['face', 'Face'], ['clothes', 'Clothes']];
+let tab = 'body';   // which group a phone shows
 function buildLooksUI() {
   const L = me.look, root = $('looks');
   root.innerHTML = '';
+  const bar = document.createElement('div'); bar.className = 'tabs'; root.appendChild(bar);
+  const groups = {};
+  for (const [k, label] of GROUPS) {
+    const t = document.createElement('button'); t.className = 'tab' + (k === tab ? ' sel' : ''); t.textContent = label;
+    t.onclick = () => { tab = k; buildLooksUI(); }; bar.appendChild(t);
+    const g = document.createElement('div'); g.className = 'group' + (k === tab ? ' on' : ''); root.appendChild(g); groups[k] = g;
+  }
+  let into = groups.body;
   const row = (title, build) => {
-    const l = document.createElement('div'); l.className = 'lbl'; l.textContent = title; root.appendChild(l);
-    const o = document.createElement('div'); o.className = 'opts'; build(o); root.appendChild(o);
+    const l = document.createElement('div'); l.className = 'lbl'; l.textContent = title; into.appendChild(l);
+    const o = document.createElement('div'); o.className = 'opts'; build(o); into.appendChild(o);
   };
+  const group = k => { into = groups[k]; };
   const swatches = (o, cols, get, set, none) => {
     if (none) { const b = document.createElement('button'); b.className = 'sw none' + (get() == null ? ' sel' : ''); b.title = 'None'; b.setAttribute('aria-label', 'None'); b.onclick = () => set(null); o.appendChild(b); }
     for (const col of cols) { const b = document.createElement('button'); b.className = 'sw' + (get() === col ? ' sel' : ''); b.style.background = col; b.setAttribute('aria-label', col); b.onclick = () => set(col); o.appendChild(b); }
@@ -317,11 +349,14 @@ function buildLooksUI() {
   }));
   row('Height', o => segs(o, [['small', 'Short'], [null, 'Mid'], ['tall', 'Tall']], () => L.build || null, v => upd({ build: v })));
   row('Skin', o => swatches(o, SKINS.map(s => s[0]), () => SKINS[L.skin][0], col => upd({ skin: SKINS.findIndex(s => s[0] === col) })));
+  group('hair');
   row('Hair', o => segs(o, [['short', 'Short'], ['spiky', 'Spiky'], ['long', 'Long'], ['bun', 'Bun']], () => L.style, v => upd({ style: v })));
   row('Colour', o => swatches(o, withCurrent(PALETTE.hair, L.hair), () => L.hair, col => upd({ hair: col })));
+  group('face');
   row('Face', o => segs(o, [['none', 'None'], ['beard', 'Beard'], ['goatee', 'Goatee']], () => L.beard ? 'beard' : L.goatee ? 'goatee' : 'none',
     v => upd({ beard: v === 'beard', goatee: v === 'goatee' }), v => L.sex === 'f' && v !== 'none'));
   row('Cap', o => swatches(o, withCurrent(PALETTE.hat, L.hat), () => L.hat || null, col => upd({ hat: col }), true));
+  group('clothes');
   row('Shirt', o => swatches(o, withCurrent(PALETTE.shirt, L.shirt), () => L.shirt, col => upd({ shirt: col })));
   row('Pants', o => swatches(o, withCurrent(PALETTE.pants, L.pants), () => L.pants, col => upd({ pants: col })));
   const s = document.createElement('div'); s.className = 'saved'; s.id = 'saved'; root.appendChild(s);
