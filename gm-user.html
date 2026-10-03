@@ -407,11 +407,16 @@ const KEY_DIR = { arrowup: 'up', w: 'up', arrowdown: 'down', s: 'down', arrowlef
 addEventListener('keydown', e => {
   if (!me || e.target.tagName === 'INPUT') return;
   const k = e.key.toLowerCase(), dir = KEY_DIR[k];
-  if (dir || k === ' ') e.preventDefault();
+  if (dir || k === ' ') e.preventDefault();   // no page scrolling, and Space doesn't also press a focused button
   if (e.repeat) return;
-  if (dir) press(dir); else if (k === ' ' || k === 'enter') sitOrStand();
+  if (dir) press(dir); else if (k === ' ') sitOrStand();   // Space = the Sit / Stand button
 });
-addEventListener('keyup', e => { const dir = KEY_DIR[e.key.toLowerCase()]; if (dir) unpress(dir); });
+addEventListener('keyup', e => {
+  if (!me || e.target.tagName === 'INPUT') return;
+  const k = e.key.toLowerCase(), dir = KEY_DIR[k];
+  if (k === ' ') e.preventDefault();   // a focused button would "click" on Space's keyup: sit / stand twice
+  if (dir) unpress(dir);
+});
 addEventListener('blur', () => { held = []; document.querySelectorAll('.pad .on').forEach(b => b.classList.remove('on')); });
 for (const b of document.querySelectorAll('.pad [data-dir]')) {
   const dir = b.dataset.dir, up = () => { b.classList.remove('on'); unpress(dir); };
