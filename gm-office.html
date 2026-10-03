@@ -1674,8 +1674,8 @@ function drawWall() {
     if (dx > x) seg(x, dx);
     // patio door: the right panel is fixed, the left panel slides right over it, opening the left half
     const o = doorOpen[i], mx = Math.round(dx + o * (half - 1));   // moving panel's left edge
-    R(dx - 1, y - 8, dw + 2, 15, '#2b2f3a');
-    R(dx, y - 7, dw, 13, '#c8a87a');                     // floor showing through the doorway
+    // frame only: the opening itself stays clear, so the real floor (and anyone just behind the door) shows through
+    R(dx - 1, y - 8, dw + 2, 1, '#2b2f3a'); R(dx - 1, y - 8, 1, 15, '#2b2f3a'); R(dx + dw, y - 8, 1, 15, '#2b2f3a');
     const pane = (px, glare) => {
       g.fillStyle = 'rgba(205,238,250,0.55)'; g.fillRect(px, y - 7, half, 13);
       R(px, y - 7, 1, 13, '#2b2f3a'); R(px + half - 1, y - 7, 1, 13, '#2b2f3a');
