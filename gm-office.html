@@ -593,7 +593,7 @@ const LUNCH_SEATS = [
 // props: [kind, x, y, w, h] in cells. Pillars 1-2 and 2-3 are joined by thin shelf racks (people can't pass there)
 const PROPS = [
   ['storage', 6, 0, 2, 1],                                           // office 1: black storage unit, top-left corner
-  ['silver', 45, 15, 3, 3],                                          // big square silver storage unit below the right-wall desks
+  ['silver', 45, 15, 3, 3],                                          // the secret QR art (was a silver storage unit) below the right-wall desks: see drawSecretArt_
   ['bookcase', 34, 27, 14, 1],                                       // white bookcases / cabinet storage along the bottom wall, fridge to right wall
   ['post', 11, 18, 1, 1], ['post', 21, 18, 1, 1], ['post', 31, 18, 1, 1], ['post', 41, 18, 1, 1],
   ['rack', 12, 18, 9, 1], ['rack', 22, 18, 9, 1],
@@ -1518,70 +1518,90 @@ function drawProp(p) {
     const x0 = gx * C8 - 3, y0 = (gy + h) * C8 - Math.max(h * C8, 20) - 4, cw = w * C8 + 6, ch = (gy + h) * C8 + 3 - y0;
     if (!p.cap) p.cap = capture_(x0, y0, cw, ch, () => drawPropRaw_(p));
     blitCap_(p.cap, x0, y0, cw, ch);
-    if (k === 'silver') drawSecretQr_(p);
     return;
   }
   drawPropRaw_(p);
 }
-// Secret QR on the silver storage unit: scan it to open the player page (gm-user.html, via the short link u.html).
-// It's a little cream art plate in the office's colours: the dark modules are browns with the odd rust / brick /
-// deep green, the light ones creams and pale mustard, and the three corner eyes are framed brown squares with a rust
-// centre. Every dark colour stays dark and every light one light, so phones read it like a plain QR. One module is
-// 2 screen pixels on a 1080p TV or a laptop (scan from ~10-30 cm), and the plate always fits inside the box.
+// Secret QR art where the silver storage unit used to be (3 x 3 cells under the right-wall desks): scan it to open
+// the player page (gm-user.html, via the short link u.html). It's dressed up as a framed mosaic of a sunset over
+// hills in the office palette, so it reads as a picture first:
+//  - every module takes the colour of the picture under it: dark modules get that spot's dark shade, light ones its
+//    light shade (each pair far apart in brightness, so phones still read dark / light correctly);
+//  - the three corner eyes and the small alignment mark are soft squircle targets (squares on a laptop's 2 px modules);
+//  - a little per-tile brightness jitter for a mosaic feel, and a wooden frame.
+// It fills the 24 x 24 art px of those cells at whole screen pixels per module (2 on a laptop, 3 on a 1080p TV, 6 on
+// 4K), so it's drawn on the screen canvas right after the scene, then anyone standing in front of it is drawn again.
 // QR version 3-M of https://timberjones.github.io/gm-office/u, one hex number per row (29 modules, top bit = left).
 const SECRET_QR = '1fd2487f 10410541 17568f5d 1749ce5d 174fc45d 10528141 1fd5557f 00017300 14653325 18b63763 0973ab6d 102a7788 157c5161 1415b2e3 116926d1 00375270 1f4c1661 08b96b67 1f7aa299 07105150 1dd4d3fa 0019391d 1fd7ed51 10463712 174ef3fa 174bb99d 1751a093 1040b5c8 1fd99511';
-const QR_DARK = [['#33251f', 6], ['#5a3a24', 3], ['#6b3a22', 2], ['#7a2e22', 1], ['#2f4a3a', 1]];
-const QR_LIGHT = [['#f3ecde', 6], ['#efe0c2', 3], ['#f2d9a8', 1]];
-const QR_QUIET = 2;   // light modules round the code (inside the plate)
-let secretQr = null;
-function secretQr_() {   // the art plate, 1 px per module (33 x 33 with the quiet zone), made once
-  if (secretQr) return secretQr;
-  const rows = SECRET_QR.split(' ').map(h => parseInt(h, 16)), n = rows.length, N = n + QR_QUIET * 2;
-  const pickBy = (list, h) => { let t = 0; for (const [, w] of list) t += w; let r = h * t; for (const [c, w] of list) { r -= w; if (r < 0) return c; } return list[0][0]; };
-  secretQr = canvas(N, N);
-  const q = secretQr.getContext('2d');
-  for (let Y = 0; Y < N; Y++) for (let X = 0; X < N; X++) {
-    const x = X - QR_QUIET, y = Y - QR_QUIET, inside = x >= 0 && y >= 0 && x < n && y < n;
-    const dark = inside && !!(rows[y] & (1 << (n - 1 - x)));
-    let col;
-    const eye = inside && ((x < 7 && y < 7) || (x >= n - 7 && y < 7) || (x < 7 && y >= n - 7));
-    if (eye) {   // finder: brown frame, cream gap, dark centre with a rust heart
-      const lx = x < 7 ? x : x - (n - 7), ly = y < 7 ? y : y - (n - 7), ring = lx === 0 || ly === 0 || lx === 6 || ly === 6;
-      col = !dark ? '#f2d9a8' : ring ? '#6b3a22' : lx === 3 && ly === 3 ? '#a8551f' : '#33251f';
-    } else if (inside && Math.abs(x - 22) <= 2 && Math.abs(y - 22) <= 2) {   // alignment pattern: a small brown target
-      col = !dark ? '#f2d9a8' : x === 22 && y === 22 ? '#a8551f' : '#6b3a22';
-    } else col = dark ? pickBy(QR_DARK, hash(X + 7, Y * 3 + 1)) : inside ? pickBy(QR_LIGHT, hash(X * 5, Y + 11)) : '#f3ecde';
-    q.fillStyle = col; q.fillRect(X, Y, 1, 1);
+const QR_ROWS = SECRET_QR.split(' ').map(h => parseInt(h, 16)), QR_N = QR_ROWS.length;
+const qrDark_ = (x, y) => x >= 0 && y >= 0 && x < QR_N && y < QR_N && !!(QR_ROWS[y] & (1 << (QR_N - 1 - x)));
+// the picture: [dark, light] shades at (u, v) in 0..1 across the plate
+function qrPicture_(u, v) {
+  const hill = 0.6 + 0.07 * Math.sin(u * 7 + 0.6) + 0.04 * Math.sin(u * 17);
+  if (v > 0.86) return ['#2b1f1a', '#f3e2c0'];                                  // ground
+  if (v > hill) return ['#26402f', '#e8eed8'];                                  // green hills
+  if (Math.hypot(u - 0.66, v - 0.38) < 0.19) return ['#7a3018', '#f9dca4'];     // rust sun, mustard glow
+  return v < 0.3 ? ['#4a2e1c', '#f8ecd6'] : ['#5a2e1a', '#f9e6c6'];             // sky: cream, warming towards the horizon
+}
+const qrArt = {};   // 'm/Q' -> canvas
+function secretArt_(m, QR_Q) {   // the plate (QR + a light border of QR_Q modules) at m screen px per module
+  const key = m + '/' + QR_Q, QR_ALL = QR_N + QR_Q * 2;
+  if (qrArt[key]) return qrArt[key];
+  const S = QR_ALL * m, c = canvas(S, S), q = c.getContext('2d'), img = q.createImageData(S, S), d = img.data;
+  const eyes = [[3, 3], [QR_N - 4, 3], [3, QR_N - 4]], align = [22, 22];
+  // eye shape: a squircle (|x|^3 + |y|^3) at 3+ px per module (TV), soft like a drawn target; at 2 px (laptop) the
+  // rounding costs phones some reads, so plain squares there
+  const nrm = m >= 3 ? (dx, dy) => (Math.abs(dx) ** 3 + Math.abs(dy) ** 3) ** (1 / 3) : (dx, dy) => Math.max(Math.abs(dx), Math.abs(dy));
+  for (let py = 0; py < S; py++) for (let px = 0; px < S; px++) {
+    const fx = (px + 0.5) / m - QR_Q, fy = (py + 0.5) / m - QR_Q, mx = Math.floor(fx), my = Math.floor(fy);   // module coords (pixel centre)
+    let dark = qrDark_(mx, my), jitter = 1;
+    const eye = eyes.find(([ex, ey]) => Math.abs(mx - ex) <= 3 && Math.abs(my - ey) <= 3);
+    if (eye) {   // target: dot, gap, ring
+      const r = nrm(fx - eye[0] - 0.5, fy - eye[1] - 0.5);
+      dark = r <= 1.5 || (r > 2.5 && r <= 3.5);
+    } else if (Math.abs(mx - align[0]) <= 2 && Math.abs(my - align[1]) <= 2) {   // small target
+      const r = nrm(fx - align[0] - 0.5, fy - align[1] - 0.5);
+      dark = r <= 0.5 || (r > 1.5 && r <= 2.5);
+    } else jitter = dark ? 1 : 0.94 + 0.06 * hash(mx + 40, my * 3 + 7);   // mosaic: light tiles vary a touch (dark ones stay dark)
+    const [dc, lc] = qrPicture_((mx + QR_Q + 0.5) / QR_ALL, (my + QR_Q + 0.5) / QR_ALL), col = hex(dark ? dc : lc);
+    const k = (py * S + px) * 4;
+    d[k] = Math.min(255, col[0] * jitter); d[k + 1] = Math.min(255, col[1] * jitter); d[k + 2] = Math.min(255, col[2] * jitter); d[k + 3] = 255;
   }
-  return secretQr;
+  q.putImageData(img, 0, 0);
+  return (qrArt[key] = c);
 }
-// the plate in screen pixels: module size m (whole pixels, at least 2 where the box allows) and where it sits
-function qrPlace_(p) {
-  const N = secretQr_().width, boxH = (p[4] * C8 - 2) * scale;   // the box from its lid's top edge to its foot
-  const m = Math.max(1, Math.min(Math.max(2, Math.floor(scale / 2)), Math.floor(boxH / N)));   // 2+ px, but never past the box
-  return { m, size: N * m, cx: (OX + p[1] * C8 + p[3] * C8 / 2) * scale, cy: (OY + p[2] * C8 + 2 + (p[4] * C8 - 2) / 2) * scale };
-}
-// On the 2x scene (a full-screen 1080p+ TV) a module is half an art pixel: draw it into the scene on the lid, so it's
-// lit and graded like everything else and people walk in front of it.
-function drawSecretQr_(p) {
-  if (!(g === sceneCtx && SS >= 2)) return;
-  const qr = secretQr_(), n = qr.width / 2;   // 16.5 art px, on the lid (18 tall)
-  g.imageSmoothingEnabled = false;
-  g.drawImage(qr, p[1] * C8 + 3.5, p[2] * C8 + 2.5, n, n);
-}
-// Smaller screens (laptops): the 1x scene can't hold half-pixel modules, so draw the plate on the screen canvas over
-// the middle of the box at whole screen pixels (2 per module at the usual laptop size, exactly the box's height).
-// Skipped while someone stands in front of the box, so it never covers people.
-function drawSecretQrScreen_() {
-  if (SS >= 2) return;
-  const p = PROPS.find(q => q[0] === 'silver'); if (!p) return;
-  const x0 = p[1] * C8 - 1, y0 = p[2] * C8 + 1, x1 = (p[1] + p[3]) * C8 + 1, y1 = (p[2] + p[4]) * C8;   // the box in art px
-  const inFront = e => e.present && !e.hidden && e.px + 12 > x0 && e.px - 2 < x1 && e.py + 8 > y0 && e.py - 12 < y1 && e.py + 8 > y1 - 2;
-  if (workers.some(inFront) || dogs.some(inFront) || (courier.present && inFront(courier))) return;
-  const { size, cx, cy } = qrPlace_(p), x = Math.round(cx - size / 2), y = Math.round(cy - size / 2);
-  mctx.save(); mctx.setTransform(1, 0, 0, 1, 0, 0); mctx.imageSmoothingEnabled = false;
-  mctx.drawImage(secretQr_(), x, y, size, size);
-  mctx.restore();
+const ART_CELLS = { x: 45 * C8, y: 15 * C8, w: 3 * C8, h: 3 * C8 };   // the art's spot (art px, office coords)
+let artFix = null;   // small canvas to redraw people standing in front of the art
+function drawSecretArt_() {
+  // biggest whole-pixel module that fits; a 2-module light border when that doesn't shrink the modules (else 1)
+  const A = ART_CELLS, box = A.w * scale, m1 = Math.floor((box - 2) / (QR_N + 2)), m2 = Math.floor((box - 2) / (QR_N + 4));
+  const Q = m2 === m1 ? 2 : 1, m = Math.max(1, m1), size = (QR_N + Q * 2) * m;
+  const bx = Math.round((OX + A.x) * scale), by = Math.round((OY + A.y) * scale);
+  const x = bx + Math.round((box - size) / 2), y = by + Math.round((box - size) / 2), f = Math.max(2, Math.round(scale * 0.75));
+  const c = mctx;
+  c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.imageSmoothingEnabled = false;
+  c.fillStyle = 'rgba(40,20,8,0.28)'; c.fillRect(x - f + scale, y - f + scale, size + f * 2, size + f * 2);   // shadow
+  c.fillStyle = '#33251f'; c.fillRect(x - f - 1, y - f - 1, size + f * 2 + 2, size + f * 2 + 2);          // frame: outline,
+  c.fillStyle = '#8a5a32'; c.fillRect(x - f, y - f, size + f * 2, size + f * 2);                          // wood,
+  c.fillStyle = '#b07a48'; c.fillRect(x - f, y - f, size + f * 2, Math.max(1, f >> 1));                   // lit top edge
+  c.drawImage(secretArt_(m, Q), x, y);
+  c.restore();
+  // people / dogs in front of it: draw them again over the art (same sprites, clipped to its spot)
+  const r = { x: A.x - 3, y: A.y - 3, w: A.w + 6, h: A.h + 6 };
+  const hit = e => e.present && !e.hidden && e.px + 12 > r.x && e.px - 3 < r.x + r.w && e.py + 9 > r.y && e.py - 12 < r.y + r.h && e.py + 8 > A.y + 2;
+  const front = [...workers.filter(hit).map(w => [w, drawPerson]), ...dogs.filter(hit).map(d => [d, drawDog])];
+  if (courier.present && hit(courier)) front.push([courier, drawPerson]);
+  if (!front.length) return;
+  front.sort((a, b) => a[0].py - b[0].py);
+  if (!artFix) artFix = canvas(1, 1);
+  artFix.width = r.w * SS; artFix.height = r.h * SS;
+  const save = [g, sceneCtx], fx = artFix.getContext('2d');
+  g = sceneCtx = fx; fx.setTransform(SS, 0, 0, SS, -r.x * SS, -r.y * SS); fx.imageSmoothingEnabled = false;
+  for (const [e, draw] of front) draw(e);
+  [g, sceneCtx] = save;
+  c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.imageSmoothingEnabled = false;
+  c.drawImage(artFix, Math.round((OX + r.x) * scale), Math.round((OY + r.y) * scale), r.w * scale, r.h * scale);
+  c.restore();
 }
 function drawPropRaw_(p) {
   const [k, gx, gy, w, h] = p, x = gx * C8, y = gy * C8, bottom = (gy + h) * C8;
@@ -1635,17 +1655,7 @@ function drawPropRaw_(p) {
       for (let k = 0; k < w; k += 3) { const h = hash(gx + k, 27); if (h < 0.5) R(x + k * C8 + 3, top + 1, 4, 2, ['#c8b48a', '#3b6fd6', '#f1e9d6', '#9aa4b0'][(h * 8 | 0) % 4]); }
       break;
     }
-    case 'silver': {    // big square brushed-metal storage unit: a tall lid (the QR lives on it, see drawSecretQr_), short doors in front
-      const cw = w * C8, top = y + 2, face = bottom - 4;
-      R(x - 1, top - 1, cw + 2, bottom - top + 2, OUT);
-      R(x, top, cw, face - top, '#d6dbe2'); R(x, top, cw, 1, '#eef1f5');
-      for (let yy = top + 3; yy < face - 1; yy += 3) { R(x + 1, yy, 3, 1, '#c6ccd4'); R(x + cw - 4, yy, 3, 1, '#c6ccd4'); }   // brushed edges either side of the QR
-      R(x, face, cw, 1, '#8c939d'); R(x, face + 1, cw, bottom - face - 1, '#b3bac4');
-      R(x + cw / 2, face + 1, 1, bottom - face - 1, '#8c939d');
-      P(x + cw / 2 - 3, face + 2, '#6b727c'); P(x + cw / 2 + 3, face + 2, '#6b727c');   // handles
-      R(x + 1, bottom - 1, cw - 2, 1, '#8c939d');
-      break;
-    }
+    case 'silver': break;   // nothing in the scene: drawSecretArt_ paints the QR art over these cells
     case 'storage': {   // black storage cabinet against the wall
       const top = bottom - 18, cw = w * C8;
       R(x - 1, top - 1, cw + 2, 19, OUT); R(x, top, cw, 17, '#332d2a'); R(x, top, cw, 4, '#3d3632'); R(x, top, cw, 1, '#544a43'); R(x, top + 4, cw, 1, '#231d1a');
@@ -2079,7 +2089,7 @@ function render() {
     mctx.globalCompositeOperation = 'soft-light'; mctx.fillStyle = 'rgba(255,176,110,0.20)'; mctx.fillRect(0, 0, cv.width, cv.height);
     mctx.globalCompositeOperation = 'source-over'; mctx.fillStyle = vig; mctx.fillRect(0, 0, cv.width, cv.height);
   }
-  drawSecretQrScreen_();
+  drawSecretArt_();   // the QR art, at whole screen pixels, after the grade (full contrast for phones)
   drawSpeech();
 }
 function updateAmbient(dt) {
