@@ -1518,9 +1518,31 @@ function drawProp(p) {
     const x0 = gx * C8 - 3, y0 = (gy + h) * C8 - Math.max(h * C8, 20) - 4, cw = w * C8 + 6, ch = (gy + h) * C8 + 3 - y0;
     if (!p.cap) p.cap = capture_(x0, y0, cw, ch, () => drawPropRaw_(p));
     blitCap_(p.cap, x0, y0, cw, ch);
+    if (k === 'silver') drawSecretQr_(p);
     return;
   }
   drawPropRaw_(p);
+}
+// Secret QR on the silver storage unit's lid: scan it from the TV to open the player page (gm-user.html, via the
+// short link u.html). Each module is half an art pixel (one pixel of the 2x scene), dark grey on the brushed lid,
+// so from across the room it reads as a metal pattern; up close (~30-40 cm on a 1080p TV) a phone can scan it.
+// Drawn live after the cached sprite so no outline / rim / smoothing pass touches it. Only on the 2x scene (TVs):
+// at 1x a module can't be half a pixel, so smaller screens just get the plain lid.
+// QR version 3-M of https://timberjones.github.io/gm-office/u, one hex number per row (29 modules, top bit = left).
+const SECRET_QR = '1fd2487f 10410541 17568f5d 1749ce5d 174fc45d 10528141 1fd5557f 00017300 14653325 18b63763 0973ab6d 102a7788 157c5161 1415b2e3 116926d1 00375270 1f4c1661 08b96b67 1f7aa299 07105150 1dd4d3fa 0019391d 1fd7ed51 10463712 174ef3fa 174bb99d 1751a093 1040b5c8 1fd99511';
+let secretQr = null;
+function drawSecretQr_(p) {
+  if (!(g === sceneCtx && SS >= 2)) return;
+  if (!secretQr) {   // 1 px per module; drawn at half size below
+    const rows = SECRET_QR.split(' ').map(h => parseInt(h, 16)), n = rows.length;
+    secretQr = canvas(n, n);
+    const q = secretQr.getContext('2d'); q.fillStyle = '#6b727c';   // the handles' grey: blends into the metal, still reads on a phone
+    rows.forEach((v, y) => { for (let x = 0; x < n; x++) if (v & (1 << (n - 1 - x))) q.fillRect(x, y, 1, 1); });
+  }
+  const [, gx, gy] = p, n = secretQr.width / 2;   // 14.5 art px
+  const x = gx * C8 + 4.5, y = gy * C8 + 3.5;      // centred on the lid, 3+ modules of light lid all round
+  g.imageSmoothingEnabled = false;
+  g.drawImage(secretQr, x, y, n, n);
 }
 function drawPropRaw_(p) {
   const [k, gx, gy, w, h] = p, x = gx * C8, y = gy * C8, bottom = (gy + h) * C8;
@@ -1574,16 +1596,15 @@ function drawPropRaw_(p) {
       for (let k = 0; k < w; k += 3) { const h = hash(gx + k, 27); if (h < 0.5) R(x + k * C8 + 3, top + 1, 4, 2, ['#c8b48a', '#3b6fd6', '#f1e9d6', '#9aa4b0'][(h * 8 | 0) % 4]); }
       break;
     }
-    case 'silver': {    // big square brushed-metal storage unit: lid on top, two doors on the front
-      const cw = w * C8, top = y + 2, face = bottom - 9;
+    case 'silver': {    // big square brushed-metal storage unit: a tall lid (the QR lives on it, see drawSecretQr_), short doors in front
+      const cw = w * C8, top = y + 2, face = bottom - 4;
       R(x - 1, top - 1, cw + 2, bottom - top + 2, OUT);
       R(x, top, cw, face - top, '#d6dbe2'); R(x, top, cw, 1, '#eef1f5');
-      for (let yy = top + 3; yy < face - 1; yy += 3) R(x + 1, yy, cw - 2, 1, '#c6ccd4');   // brushed lid
+      for (let yy = top + 3; yy < face - 1; yy += 3) { R(x + 1, yy, 3, 1, '#c6ccd4'); R(x + cw - 4, yy, 3, 1, '#c6ccd4'); }   // brushed edges either side of the QR
       R(x, face, cw, 1, '#8c939d'); R(x, face + 1, cw, bottom - face - 1, '#b3bac4');
       R(x + cw / 2, face + 1, 1, bottom - face - 1, '#8c939d');
-      R(x + cw / 2 - 3, face + 3, 1, 3, '#6b727c'); R(x + cw / 2 + 3, face + 3, 1, 3, '#6b727c');   // handles
+      P(x + cw / 2 - 3, face + 2, '#6b727c'); P(x + cw / 2 + 3, face + 2, '#6b727c');   // handles
       R(x + 1, bottom - 1, cw - 2, 1, '#8c939d');
-      R(x + 1, face + 2, 1, bottom - face - 4, '#cdd3db'); R(x + cw / 2 + 1, face + 2, 1, bottom - face - 4, '#cdd3db');   // lit door edges
       break;
     }
     case 'storage': {   // black storage cabinet against the wall
