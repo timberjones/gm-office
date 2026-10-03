@@ -42,42 +42,42 @@
   #again button { background: none; border: 0; padding: 0; color: var(--ink); text-decoration: underline; cursor: pointer; }
   #pickErr { color: #d9453b; font-size: 0.9rem; margin-top: 8px; min-height: 1.2em; }
 
-  /* ---- play */
-  #play { max-width: 960px; margin: 0 auto; }
-  .top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
-  .who { font-weight: 700; font-size: 1.1rem; }
-  .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; padding: 4px 10px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); }
-  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); }
+  /* ---- play: [avatar | settings] on one row, the controls under them */
+  #play { max-width: 720px; margin: 0 auto; }
+  .top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .who { font-weight: 700; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; padding: 2px 9px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
   .chip.live .dot { background: var(--live); }
   .top .spacer { flex: 1; }
-  .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-  @media (max-width: 720px) { .grid { grid-template-columns: minmax(0, 1fr); } }
-  .stage { position: relative; border-radius: 12px; overflow: hidden; border: 1px solid var(--line);
-    background: repeating-linear-gradient(0deg, var(--floor) 0 14px, var(--floor2) 14px 16px); }
-  #avatar { display: block; width: 100%; aspect-ratio: 4 / 3; image-rendering: pixelated; }
-  @media (max-width: 720px) { #avatar { aspect-ratio: 16 / 10; } }   /* phones: shorter, so the d-pad stays up */
-  .where { position: absolute; left: 10px; bottom: 10px; font-size: 0.85rem; background: rgba(30, 20, 15, 0.72); color: #fff6e6; padding: 3px 9px; border-radius: 6px; }
-  #map { display: block; width: 100%; image-rendering: pixelated; border-radius: 8px; margin-top: 10px; border: 1px solid var(--line); }
-  .hint { font-size: 0.82rem; color: var(--muted); margin-top: 6px; }
+  .top .btn { padding: 5px 10px; font-size: 0.85rem; }
+  .row1 { display: flex; gap: 12px; align-items: flex-start; }
+  .stage { position: relative; flex: none; width: clamp(96px, 28vw, 190px); border-radius: 10px; overflow: hidden; border: 1px solid var(--line);
+    background: repeating-linear-gradient(0deg, var(--floor) 0 10px, var(--floor2) 10px 12px); }
+  #avatar { display: block; width: 100%; aspect-ratio: 3 / 4; image-rendering: pixelated; }
+  .where { position: absolute; left: 0; right: 0; bottom: 0; font-size: 0.7rem; text-align: center; background: rgba(30, 20, 15, 0.72); color: #fff6e6; padding: 2px 4px; }
+  .hint { font-size: 0.78rem; color: var(--muted); text-align: center; margin-top: 4px; }
 
-  /* d-pad */
-  .pad { display: grid; grid-template-columns: repeat(3, 64px); grid-template-rows: repeat(3, 64px); gap: 6px; justify-content: center; margin: 14px auto 0;
-    touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-  .pad button { border: 1px solid var(--line); border-radius: 12px; background: var(--pad); font-size: 1.5rem; cursor: pointer; touch-action: none; display: flex; align-items: center; justify-content: center; }
-  .pad button.on { background: var(--pad-press); color: var(--accent-ink); }
-  .pad .sit { font-size: 0.85rem; font-weight: 600; border-radius: 50%; }
-  .pad .up { grid-area: 1 / 2; } .pad .left { grid-area: 2 / 1; } .pad .sit { grid-area: 2 / 2; } .pad .right { grid-area: 2 / 3; } .pad .down { grid-area: 3 / 2; }
-
-  /* dress up */
-  .looks .row { margin-bottom: 14px; }
-  .opts { display: flex; flex-wrap: wrap; gap: 6px; }
-  .sw { width: 32px; height: 32px; border-radius: 8px; border: 2px solid var(--line); cursor: pointer; padding: 0; }
+  /* dress up: label | options, one line each */
+  .looks { flex: 1; min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 8px; align-items: center; }
+  .looks .lbl { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); white-space: nowrap; }
+  .opts { display: flex; flex-wrap: wrap; gap: 4px; }
+  .sw { width: 22px; height: 22px; border-radius: 6px; border: 2px solid var(--line); cursor: pointer; padding: 0; }
   .sw.sel { border-color: var(--ink); box-shadow: 0 0 0 2px var(--card) inset; }
-  .sw.none { background: repeating-linear-gradient(45deg, var(--card) 0 5px, var(--line) 5px 7px); }
-  .seg { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 0.9rem; }
+  .sw.none { background: repeating-linear-gradient(45deg, var(--card) 0 4px, var(--line) 4px 6px); }
+  .seg { border: 1px solid var(--line); background: var(--card); border-radius: 6px; padding: 1px 7px; cursor: pointer; font-size: 0.78rem; }
   .seg.sel { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
   .seg:disabled { opacity: 0.4; cursor: default; }
-  .saved { font-size: 0.82rem; color: var(--muted); min-height: 1.2em; }
+  .saved { grid-column: 1 / -1; font-size: 0.72rem; color: var(--muted); min-height: 1.1em; }
+  @media (min-width: 600px) { .sw { width: 26px; height: 26px; } .seg { padding: 3px 10px; font-size: 0.85rem; } .looks { gap: 7px 12px; } }
+
+  /* d-pad */
+  .pad { display: grid; grid-template-columns: repeat(3, 58px); grid-template-rows: repeat(3, 58px); gap: 5px; justify-content: center; margin: 12px auto 0;
+    touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  .pad button { border: 1px solid var(--line); border-radius: 12px; background: var(--pad); font-size: 1.4rem; cursor: pointer; touch-action: none; display: flex; align-items: center; justify-content: center; }
+  .pad button.on { background: var(--pad-press); color: var(--accent-ink); }
+  .pad .sit { font-size: 0.8rem; font-weight: 600; border-radius: 50%; }
+  .pad .up { grid-area: 1 / 2; } .pad .left { grid-area: 2 / 1; } .pad .sit { grid-area: 2 / 2; } .pad .right { grid-area: 2 / 3; } .pad .down { grid-area: 3 / 2; }
 </style>
 </head>
 <body>
@@ -105,25 +105,21 @@
     <span class="spacer"></span>
     <button class="btn ghost" id="switchBtn" type="button">Switch person</button>
   </div>
-  <div class="grid">
-    <section>
-      <div class="stage">
-        <canvas id="avatar" width="320" height="240"></canvas>
-        <span class="where" id="where"></span>
-      </div>
-      <div class="pad" id="pad">
-        <button class="up" data-dir="up" aria-label="Up">▲</button>
-        <button class="left" data-dir="left" aria-label="Left">◀</button>
-        <button class="sit" id="sitBtn" aria-label="Sit or stand">Sit</button>
-        <button class="right" data-dir="right" aria-label="Right">▶</button>
-        <button class="down" data-dir="down" aria-label="Down">▼</button>
-      </div>
-      <div class="hint" style="text-align:center">Tap or hold the arrows · on a keyboard: arrows / WASD, Space to sit</div>
-      <canvas id="map"></canvas>
-      <div class="hint">Where you are in the office. Watch the TV to see yourself walk.</div>
-    </section>
-    <section class="card looks" id="looks"></section>
+  <div class="row1">
+    <div class="stage">
+      <canvas id="avatar" width="150" height="200"></canvas>
+      <span class="where" id="where"></span>
+    </div>
+    <section class="looks" id="looks"></section>
   </div>
+  <div class="pad" id="pad">
+    <button class="up" data-dir="up" aria-label="Up">▲</button>
+    <button class="left" data-dir="left" aria-label="Left">◀</button>
+    <button class="sit" id="sitBtn" aria-label="Sit or stand">Sit</button>
+    <button class="right" data-dir="right" aria-label="Right">▶</button>
+    <button class="down" data-dir="down" aria-label="Down">▼</button>
+  </div>
+  <div class="hint">Tap or hold the arrows · keyboard: arrows / WASD, Space to sit</div>
 </main>
 
 <script type="module">
@@ -182,7 +178,7 @@ function startAs(uid) {
   me.px = me.tx * C8; me.py = me.ty * C8;
   $('who').textContent = (home ? 'User ' : 'New person ') + uid;
   $('pick').classList.add('hidden'); $('play').classList.remove('hidden');
-  buildLooksUI(); drawMap(); updateWhere();
+  buildLooksUI(); updateWhere();
   relay.stop = false; relayConnect();
 }
 function showPick() {
@@ -239,7 +235,7 @@ function walk(dt) {
   }
 }
 
-// ---- where am I (a word, and the little map)
+// ---- where am I (a word under the avatar)
 function placeName(x, y, seat) {
   if (seat) {
     if (me.home && seat === me.home) return 'At your desk';
@@ -255,31 +251,6 @@ function placeName(x, y, seat) {
 let flashT = 0;
 function updateWhere() { if (me && performance.now() > flashT) $('where').textContent = placeName(me.tx, me.ty, me.seat); }
 function flashWhere(t) { $('where').textContent = t; flashT = performance.now() + 1500; setTimeout(updateWhere, 1600); }
-let mapBase = null;
-function drawMap() {
-  const K = 6, c = $('map');
-  c.width = GX * K; c.height = GY * K;
-  if (!mapBase) {
-    mapBase = document.createElement('canvas'); mapBase.width = c.width; mapBase.height = c.height;
-    const m = mapBase.getContext('2d');
-    m.fillStyle = '#8a8d96'; m.fillRect(0, 0, c.width, c.height);
-    for (let y = 0; y < GY; y++) for (let x = 0; x < GX; x++) {
-      const i = idx(x, y);
-      m.fillStyle = isSeat[i] ? '#e8cf9a' : blocked[i] ? (x < 6 ? '#8a8d96' : '#6b5040') : (x < 6 ? '#cfc6b8' : '#d7a873');
-      m.fillRect(x * K, y * K, K, K);
-    }
-    m.fillStyle = 'rgba(255,255,255,0.35)';
-    for (const [x0, x1] of GLASS_DOORS) m.fillRect(x0 * K, 8 * K, (x1 - x0 + 1) * K / 2, K);
-  }
-}
-function renderMap() {
-  const K = 6, c = $('map'), m = c.getContext('2d');
-  m.drawImage(mapBase, 0, 0);
-  const x = me.px / C8 * K + K / 2, y = me.py / C8 * K + K / 2, r = K * 0.85 + Math.sin(performance.now() / 200) * 0.8;
-  m.fillStyle = '#33251f'; m.beginPath(); m.arc(x, y, r + 1.5, 0, Math.PI * 2); m.fill();
-  m.fillStyle = '#f5c542'; m.beginPath(); m.arc(x, y, r, 0, Math.PI * 2); m.fill();
-}
-
 // ---- your character, big
 function renderAvatar(t) {
   const c = $('avatar'), dpr = window.devicePixelRatio || 1, W = Math.round(c.clientWidth * dpr), H = Math.round(c.clientHeight * dpr);
@@ -296,10 +267,10 @@ function renderAvatar(t) {
     f = F[me.dir + k];
   }
   const a = f.art || 1, fw = f.width / a, fh = f.height / a;      // art pixels
-  const S = Math.max(2, Math.floor(Math.min(W / 26, H / 30)));   // screen px per art pixel
-  const x = Math.round((W - fw * S) / 2), y = Math.round(H * 0.84 - fh * S) - (!walking && !me.seat && ((t / 900) | 0) % 2 ? S / 2 : 0);   // idle: a slow breath
+  const S = Math.max(2, Math.floor(Math.min(W / 19, H / 24)));   // screen px per art pixel
+  const x = Math.round((W - fw * S) / 2), y = Math.round(H * 0.86 - fh * S) - (!walking && !me.seat && ((t / 900) | 0) % 2 ? S / 2 : 0);   // idle: a slow breath
   g2.fillStyle = 'rgba(40,20,8,0.25)';
-  g2.beginPath(); g2.ellipse(W / 2 + S, H * 0.84 - S, 6 * S, 2.2 * S, 0, 0, Math.PI * 2); g2.fill();
+  g2.beginPath(); g2.ellipse(W / 2 + S, H * 0.86 - S, 6 * S, 2.2 * S, 0, 0, Math.PI * 2); g2.fill();
   if (me.seat) drawChair(g2, me.seat, x, y, fh, S);
   g2.drawImage(f, x, y, fw * S, fh * S);
 }
@@ -315,11 +286,21 @@ function drawChair(g2, s, x, y, fh, S) {   // a simple chair in the seat's colou
 }
 
 // ---- dress up
-const HAT_COLS = ['#2a3a6c', '#d9453b', '#22b573', '#2a2238', '#ec8f2b', '#f3ecdf', '#8b5cf6'];
+// a short palette per setting (keeps the panel to one line each); a colour someone already wears stays selectable
+const PALETTE = {
+  hair: ['#1a1a24', '#3a2a20', '#6b3a22', '#8a5a32', '#c8742a', '#e3c26a', '#9aa4b0'],
+  hat: ['#2a3a6c', '#d9453b', '#22b573', '#2a2238'],
+  shirt: ['#22b573', '#3b6fd6', '#d9453b', '#ec8f2b', '#8b5cf6', '#f472b6', '#f3ecdf'],
+  pants: ['#2f3a5c', '#3b5a96', '#5a4a3a', '#6b6f7a'],
+};
+const withCurrent = (list, cur) => cur && !list.includes(cur) ? [cur, ...list] : list;
 function buildLooksUI() {
   const L = me.look, root = $('looks');
   root.innerHTML = '';
-  const row = (title, build) => { const r = document.createElement('div'); r.className = 'row'; r.innerHTML = `<h2>${title}</h2>`; const o = document.createElement('div'); o.className = 'opts'; build(o); r.appendChild(o); root.appendChild(r); };
+  const row = (title, build) => {
+    const l = document.createElement('div'); l.className = 'lbl'; l.textContent = title; root.appendChild(l);
+    const o = document.createElement('div'); o.className = 'opts'; build(o); root.appendChild(o);
+  };
   const swatches = (o, cols, get, set, none) => {
     if (none) { const b = document.createElement('button'); b.className = 'sw none' + (get() == null ? ' sel' : ''); b.title = 'None'; b.setAttribute('aria-label', 'None'); b.onclick = () => set(null); o.appendChild(b); }
     for (const col of cols) { const b = document.createElement('button'); b.className = 'sw' + (get() === col ? ' sel' : ''); b.style.background = col; b.setAttribute('aria-label', col); b.onclick = () => set(col); o.appendChild(b); }
@@ -334,15 +315,15 @@ function buildLooksUI() {
     if (v === 'f') Object.assign(p, { beard: false, goatee: false });
     upd(p);
   }));
-  row('Height', o => segs(o, [['small', 'Short'], [null, 'Normal'], ['tall', 'Tall']], () => L.build || null, v => upd({ build: v })));
+  row('Height', o => segs(o, [['small', 'Short'], [null, 'Mid'], ['tall', 'Tall']], () => L.build || null, v => upd({ build: v })));
   row('Skin', o => swatches(o, SKINS.map(s => s[0]), () => SKINS[L.skin][0], col => upd({ skin: SKINS.findIndex(s => s[0] === col) })));
   row('Hair', o => segs(o, [['short', 'Short'], ['spiky', 'Spiky'], ['long', 'Long'], ['bun', 'Bun']], () => L.style, v => upd({ style: v })));
-  row('Hair colour', o => swatches(o, [...new Set(HAIRS), '#d9d4cc', '#c0466e', '#4a6fd0'], () => L.hair, col => upd({ hair: col })));
-  row('Facial hair', o => segs(o, [['none', 'None'], ['beard', 'Beard'], ['goatee', 'Goatee']], () => L.beard ? 'beard' : L.goatee ? 'goatee' : 'none',
+  row('Colour', o => swatches(o, withCurrent(PALETTE.hair, L.hair), () => L.hair, col => upd({ hair: col })));
+  row('Face', o => segs(o, [['none', 'None'], ['beard', 'Beard'], ['goatee', 'Goatee']], () => L.beard ? 'beard' : L.goatee ? 'goatee' : 'none',
     v => upd({ beard: v === 'beard', goatee: v === 'goatee' }), v => L.sex === 'f' && v !== 'none'));
-  row('Cap', o => swatches(o, HAT_COLS, () => L.hat || null, col => upd({ hat: col }), true));
-  row('Shirt', o => swatches(o, [...new Set(SHIRTS)], () => L.shirt, col => upd({ shirt: col })));
-  row('Pants', o => swatches(o, [...new Set(PANTS)], () => L.pants, col => upd({ pants: col })));
+  row('Cap', o => swatches(o, withCurrent(PALETTE.hat, L.hat), () => L.hat || null, col => upd({ hat: col }), true));
+  row('Shirt', o => swatches(o, withCurrent(PALETTE.shirt, L.shirt), () => L.shirt, col => upd({ shirt: col })));
+  row('Pants', o => swatches(o, withCurrent(PALETTE.pants, L.pants), () => L.pants, col => upd({ pants: col })));
   const s = document.createElement('div'); s.className = 'saved'; s.id = 'saved'; root.appendChild(s);
 }
 let lookT = 0;
@@ -438,7 +419,7 @@ function frame(now) {
   if (!me) return;
   walk(dt);
   $('sitBtn').textContent = me.seat ? 'Stand' : 'Sit';
-  renderAvatar(now); renderMap();
+  renderAvatar(now);
 }
 try {
   await loadShared();
