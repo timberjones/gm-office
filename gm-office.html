@@ -1523,43 +1523,64 @@ function drawProp(p) {
   }
   drawPropRaw_(p);
 }
-// Secret QR on the silver storage unit's lid: scan it from the TV to open the player page (gm-user.html, via the
-// short link u.html). Each module is half an art pixel (one pixel of the 2x scene), dark grey on the brushed lid,
-// so from across the room it reads as a metal pattern; up close (~30-40 cm on a 1080p TV) a phone can scan it.
-// Drawn live after the cached sprite so no outline / rim / smoothing pass touches it. That needs the 2x scene (a
-// full-screen 1080p+ TV); on smaller screens (laptops) drawSecretQrScreen_ puts it on a little metal plate over the
-// box instead, at whole screen pixels big enough to scan.
+// Secret QR on the silver storage unit: scan it to open the player page (gm-user.html, via the short link u.html).
+// It's a little cream art plate in the office's colours: the dark modules are browns with the odd rust / brick /
+// deep green, the light ones creams and pale mustard, and the three corner eyes are framed brown squares with a rust
+// centre. Every dark colour stays dark and every light one light, so phones read it like a plain QR. One module is
+// 2 screen pixels on a 1080p TV or a laptop (scan from ~10-30 cm), and the plate always fits inside the box.
 // QR version 3-M of https://timberjones.github.io/gm-office/u, one hex number per row (29 modules, top bit = left).
 const SECRET_QR = '1fd2487f 10410541 17568f5d 1749ce5d 174fc45d 10528141 1fd5557f 00017300 14653325 18b63763 0973ab6d 102a7788 157c5161 1415b2e3 116926d1 00375270 1f4c1661 08b96b67 1f7aa299 07105150 1dd4d3fa 0019391d 1fd7ed51 10463712 174ef3fa 174bb99d 1751a093 1040b5c8 1fd99511';
+const QR_DARK = [['#33251f', 6], ['#5a3a24', 3], ['#6b3a22', 2], ['#7a2e22', 1], ['#2f4a3a', 1]];
+const QR_LIGHT = [['#f3ecde', 6], ['#efe0c2', 3], ['#f2d9a8', 1]];
+const QR_QUIET = 2;   // light modules round the code (inside the plate)
 let secretQr = null;
-function secretQr_() {   // 1 px per module, made once
-  if (!secretQr) {
-    const rows = SECRET_QR.split(' ').map(h => parseInt(h, 16)), n = rows.length;
-    secretQr = canvas(n, n);
-    const q = secretQr.getContext('2d'); q.fillStyle = '#6b727c';   // the handles' grey: blends into the metal, still reads on a phone
-    rows.forEach((v, y) => { for (let x = 0; x < n; x++) if (v & (1 << (n - 1 - x))) q.fillRect(x, y, 1, 1); });
+function secretQr_() {   // the art plate, 1 px per module (33 x 33 with the quiet zone), made once
+  if (secretQr) return secretQr;
+  const rows = SECRET_QR.split(' ').map(h => parseInt(h, 16)), n = rows.length, N = n + QR_QUIET * 2;
+  const pickBy = (list, h) => { let t = 0; for (const [, w] of list) t += w; let r = h * t; for (const [c, w] of list) { r -= w; if (r < 0) return c; } return list[0][0]; };
+  secretQr = canvas(N, N);
+  const q = secretQr.getContext('2d');
+  for (let Y = 0; Y < N; Y++) for (let X = 0; X < N; X++) {
+    const x = X - QR_QUIET, y = Y - QR_QUIET, inside = x >= 0 && y >= 0 && x < n && y < n;
+    const dark = inside && !!(rows[y] & (1 << (n - 1 - x)));
+    let col;
+    const eye = inside && ((x < 7 && y < 7) || (x >= n - 7 && y < 7) || (x < 7 && y >= n - 7));
+    if (eye) {   // finder: brown frame, cream gap, dark centre with a rust heart
+      const lx = x < 7 ? x : x - (n - 7), ly = y < 7 ? y : y - (n - 7), ring = lx === 0 || ly === 0 || lx === 6 || ly === 6;
+      col = !dark ? '#f2d9a8' : ring ? '#6b3a22' : lx === 3 && ly === 3 ? '#a8551f' : '#33251f';
+    } else if (inside && Math.abs(x - 22) <= 2 && Math.abs(y - 22) <= 2) {   // alignment pattern: a small brown target
+      col = !dark ? '#f2d9a8' : x === 22 && y === 22 ? '#a8551f' : '#6b3a22';
+    } else col = dark ? pickBy(QR_DARK, hash(X + 7, Y * 3 + 1)) : inside ? pickBy(QR_LIGHT, hash(X * 5, Y + 11)) : '#f3ecde';
+    q.fillStyle = col; q.fillRect(X, Y, 1, 1);
   }
   return secretQr;
 }
+// the plate in screen pixels: module size m (whole pixels, at least 2 where the box allows) and where it sits
+function qrPlace_(p) {
+  const N = secretQr_().width, boxH = (p[4] * C8 - 2) * scale;   // the box from its lid's top edge to its foot
+  const m = Math.max(1, Math.min(Math.max(2, Math.floor(scale / 2)), Math.floor(boxH / N)));   // 2+ px, but never past the box
+  return { m, size: N * m, cx: (OX + p[1] * C8 + p[3] * C8 / 2) * scale, cy: (OY + p[2] * C8 + 2 + (p[4] * C8 - 2) / 2) * scale };
+}
+// On the 2x scene (a full-screen 1080p+ TV) a module is half an art pixel: draw it into the scene on the lid, so it's
+// lit and graded like everything else and people walk in front of it.
 function drawSecretQr_(p) {
   if (!(g === sceneCtx && SS >= 2)) return;
-  const qr = secretQr_(), [, gx, gy] = p, n = qr.width / 2;   // 14.5 art px
-  const x = gx * C8 + 4.5, y = gy * C8 + 3.5;      // centred on the lid, 3+ modules of light lid all round
+  const qr = secretQr_(), n = qr.width / 2;   // 16.5 art px, on the lid (18 tall)
   g.imageSmoothingEnabled = false;
-  g.drawImage(qr, x, y, n, n);
+  g.drawImage(qr, p[1] * C8 + 3.5, p[2] * C8 + 2.5, n, n);
 }
-// Smaller screens: the 1x scene can't hold half-pixel modules, so draw the QR on the screen canvas over the box, on a
-// lid-coloured plate, ~2.5 CSS px per module (a phone reads it from ~10-15 cm on a laptop). Bigger than the box there.
+// Smaller screens (laptops): the 1x scene can't hold half-pixel modules, so draw the plate on the screen canvas over
+// the middle of the box at whole screen pixels (2 per module at the usual laptop size, exactly the box's height).
+// Skipped while someone stands in front of the box, so it never covers people.
 function drawSecretQrScreen_() {
   if (SS >= 2) return;
   const p = PROPS.find(q => q[0] === 'silver'); if (!p) return;
-  const qr = secretQr_(), n = qr.width, m = Math.max(3, Math.round(2.5 * (window.devicePixelRatio || 1))), size = n * m, pad = 2 * m;
-  const cx = (OX + p[1] * C8 + p[3] * C8 / 2) * scale, cy = (OY + p[2] * C8 + 2 + (p[4] * C8 - 2) / 2) * scale;   // middle of the box
-  const x = Math.round(cx - size / 2), y = Math.round(cy - size / 2);
+  const x0 = p[1] * C8 - 1, y0 = p[2] * C8 + 1, x1 = (p[1] + p[3]) * C8 + 1, y1 = (p[2] + p[4]) * C8;   // the box in art px
+  const inFront = e => e.present && !e.hidden && e.px + 12 > x0 && e.px - 2 < x1 && e.py + 8 > y0 && e.py - 12 < y1 && e.py + 8 > y1 - 2;
+  if (workers.some(inFront) || dogs.some(inFront) || (courier.present && inFront(courier))) return;
+  const { size, cx, cy } = qrPlace_(p), x = Math.round(cx - size / 2), y = Math.round(cy - size / 2);
   mctx.save(); mctx.setTransform(1, 0, 0, 1, 0, 0); mctx.imageSmoothingEnabled = false;
-  mctx.fillStyle = '#33251f'; mctx.fillRect(x - pad - 2, y - pad - 2, size + pad * 2 + 4, size + pad * 2 + 4);   // the plate's outline
-  mctx.fillStyle = '#d6dbe2'; mctx.fillRect(x - pad, y - pad, size + pad * 2, size + pad * 2);
-  mctx.drawImage(qr, x, y, size, size);
+  mctx.drawImage(secretQr_(), x, y, size, size);
   mctx.restore();
 }
 function drawPropRaw_(p) {
