@@ -592,7 +592,7 @@ const LUNCH_SEATS = [
 
 // props: [kind, x, y, w, h] in cells. Pillars 1-2 and 2-3 are joined by thin shelf racks (people can't pass there)
 const PROPS = [
-  ['storage', 6, 0, 2, 1],                                           // office 1: black storage unit, top-left corner
+  ['storage', 6, 0, 1, 2],                                           // office 1: black storage unit, top-left corner against the left wall, doors facing right
   ['silver', 45, 15, 3, 3],                                          // the secret QR art (was a silver storage unit) below the right-wall desks: see drawSecretArt_
   ['bookcase', 34, 27, 14, 1],                                       // white bookcases / cabinet storage along the bottom wall, fridge to right wall
   ['post', 11, 18, 1, 1], ['post', 21, 18, 1, 1], ['post', 31, 18, 1, 1], ['post', 41, 18, 1, 1],
@@ -1522,54 +1522,84 @@ function drawProp(p) {
   }
   drawPropRaw_(p);
 }
-// Secret QR art where the silver storage unit used to be (3 x 3 cells under the right-wall desks): scan it to open
-// the player page (gm-user.html, via the short link u.html). Dressed as an abstract colour-block painting so it
-// doesn't read as a code:
-//  - big bold shapes (a sun disc, a triangle, a diagonal band, a block) cut across the grid; each shape has a light
-//    and a dark colour, and every pixel takes its shape's colour (dark where the module is dark), so colours change
-//    mid-module along the shapes' edges and the QR grid dissolves into the composition;
-//  - the corner eyes stay plain squares (diamond or round centres cost phones reads) but take the colours of the
-//    shapes they sit in, so they don't pop out as three black squares.
-// Every light colour is light and every dark colour dark (far apart in brightness), so phones read it like a plain
-// QR. Modules are whole screen pixels (at least 2: 2 on a laptop, 3 on a 1080p TV), so it's drawn on the screen
-// canvas after the scene, and anyone standing in front of it is drawn again.
+// Secret QR where the silver storage unit used to be (3 x 3 cells under the right-wall desks), out only over lunch
+// (12-1 pm Eastern; the rest of the day a desk-coloured storage cabinet stands in exactly its spot): scan it to open the
+// player page (gm-user.html, via the short link u.html). Styled after TJ's qr.svg (rounded modules, rounded eyes)
+// in the office colours, drawn from our own direct link as vector paths at the screen's resolution:
+//  - a module with no dark neighbours is a dot; one neighbour rounds the far side; two at a corner round the opposite
+//    corner; in a line or 3+ it stays square (so runs join into smooth strokes);
+//  - eyes are a rounded square ring (radius 2.5 modules outside, 1.5 inside) with a round 3-module centre, dark like
+//    a sleeping monitor, whose standby light blinks with theirs (a small dot off the centre lines, so scans still work).
+// All modules go in one path and one fill, so neighbours join without seams. Drawn on the screen canvas after the
+// scene, and anyone standing in front of it is drawn again.
 // QR version 3-M of https://timberjones.github.io/gm-office/u, one hex number per row (29 modules, top bit = left).
 const SECRET_QR = '1fd2487f 10410541 17568f5d 1749ce5d 174fc45d 10528141 1fd5557f 00017300 14653325 18b63763 0973ab6d 102a7788 157c5161 1415b2e3 116926d1 00375270 1f4c1661 08b96b67 1f7aa299 07105150 1dd4d3fa 0019391d 1fd7ed51 10463712 174ef3fa 174bb99d 1751a093 1040b5c8 1fd99511';
 const QR_ROWS = SECRET_QR.split(' ').map(h => parseInt(h, 16)), QR_N = QR_ROWS.length, QR_Q = 2, QR_ALL = QR_N + QR_Q * 2;
-const qrDark_ = (x, y) => x >= 0 && y >= 0 && x < QR_N && y < QR_N && !!(QR_ROWS[y] & (1 << (QR_N - 1 - x)));
-// the composition: [light, dark] colours at (u, v) in 0..1 across the plate, topmost shape first
-function qrShape_(u, v) {
-  if (Math.hypot(u - 0.7, v - 0.32) < 0.24) return ['#f6c9a8', '#8a2418'];                 // sun disc: peach / oxblood
-  if (u > 0.08 && u < 0.46 && v > 0.56 && v < 0.94 && u + v > 0.62) return ['#f4d35e', '#3a2e12'];   // block: mustard / umber
-  if (v > 0.5 && u > 0.38 && v - 0.5 > (u - 0.38) * 0.9) return ['#a9d8e6', '#1c3552'];   // triangle: sky / navy
-  if (Math.abs(u - v * 0.7 - 0.18) < 0.09) return ['#f3b6b0', '#5a1e2a'];                // diagonal band: blush / plum
-  return ['#f4ecdc', '#2b2627'];                                                          // ground: cream / charcoal
+const QR_COL = { bg: WHITE_DESK.top, dot: '#4f3626', eye: '#a4502a', eyeDot: SCREEN.off, frame: WHITE_DESK.frame };   // desk top, wood brown, rust, a sleeping screen, desk edge
+const qrEye_ = (x, y) => (x < 7 && y < 7) || (x >= QR_N - 7 && y < 7) || (x < 7 && y >= QR_N - 7);
+const qrOn_ = (x, y) => x >= 0 && y >= 0 && x < QR_N && y < QR_N && !qrEye_(x, y) && !!(QR_ROWS[y] & (1 << (QR_N - 1 - x)));
+function qrRect_(q, x, y, w, h, tl, tr, br, bl) {   // rounded rect subpath, clockwise, corner radii per corner
+  q.moveTo(x + tl, y); q.lineTo(x + w - tr, y); if (tr) q.arcTo(x + w, y, x + w, y + tr, tr);
+  q.lineTo(x + w, y + h - br); if (br) q.arcTo(x + w, y + h, x + w - br, y + h, br);
+  q.lineTo(x + bl, y + h); if (bl) q.arcTo(x, y + h, x, y + h - bl, bl);
+  q.lineTo(x, y + tl); if (tl) q.arcTo(x, y, x + tl, y, tl);
+  q.closePath();
 }
-const qrArt = {};   // m -> canvas
-function secretArt_(m) {   // the plate (QR + 2-module light border) at m screen px per module
-  if (qrArt[m]) return qrArt[m];
-  const S = QR_ALL * m, c = canvas(S, S), q = c.getContext('2d'), img = q.createImageData(S, S), d = img.data;
-  for (let py = 0; py < S; py++) for (let px = 0; px < S; px++) {
-    const fx = (px + 0.5) / m - QR_Q, fy = (py + 0.5) / m - QR_Q, mx = Math.floor(fx), my = Math.floor(fy);   // module coords (pixel centre)
-    const dark = qrDark_(mx, my);
-    const [lc, dc] = qrShape_((px + 0.5) / S, (py + 0.5) / S), col = hex(dark ? dc : lc), k = (py * S + px) * 4;
-    d[k] = col[0]; d[k + 1] = col[1]; d[k + 2] = col[2]; d[k + 3] = 255;
+const qrArt = {};   // size -> canvas
+function secretArt_(S) {   // the QR with its 2-module border, S screen px square
+  if (qrArt[S]) return qrArt[S];
+  const c = canvas(S, S), q = c.getContext('2d'), p = S / QR_ALL, o = QR_Q * p, h = p / 2;
+  q.fillStyle = QR_COL.bg; q.fillRect(0, 0, S, S);
+  q.beginPath();
+  for (let y = 0; y < QR_N; y++) for (let x = 0; x < QR_N; x++) {
+    if (!qrOn_(x, y)) continue;
+    const l = qrOn_(x - 1, y), r = qrOn_(x + 1, y), t = qrOn_(x, y - 1), b = qrOn_(x, y + 1), n = l + r + t + b, X = o + x * p, Y = o + y * p;
+    if (!n) { q.moveTo(X + p, Y + h); q.arc(X + h, Y + h, h, 0, Math.PI * 2); continue; }
+    if (n > 2 || (l && r) || (t && b)) { qrRect_(q, X, Y, p, p, 0, 0, 0, 0); continue; }
+    if (n === 2) { qrRect_(q, X, Y, p, p, !t && !l ? h : 0, !t && !r ? h : 0, !b && !r ? h : 0, !b && !l ? h : 0); continue; }
+    qrRect_(q, X, Y, p, p, r || b ? h : 0, l || b ? h : 0, l || t ? h : 0, r || t ? h : 0);   // one neighbour: round the far side
   }
-  q.putImageData(img, 0, 0);
-  return (qrArt[m] = c);
+  q.fillStyle = QR_COL.dot; q.fill();
+  for (const [ex, ey] of [[0, 0], [QR_N - 7, 0], [0, QR_N - 7]]) {
+    const X = o + ex * p, Y = o + ey * p;
+    q.beginPath(); qrRect_(q, X, Y, 7 * p, 7 * p, 2.5 * p, 2.5 * p, 2.5 * p, 2.5 * p); qrRect_(q, X + p, Y + p, 5 * p, 5 * p, 1.5 * p, 1.5 * p, 1.5 * p, 1.5 * p);
+    q.fillStyle = QR_COL.eye; q.fill('evenodd');
+    q.beginPath(); q.arc(X + 3.5 * p, Y + 3.5 * p, 1.5 * p, 0, Math.PI * 2); q.fillStyle = QR_COL.eyeDot; q.fill();
+  }
+  return (qrArt[S] = c);
 }
-const ART_CELLS = { x: 45 * C8, y: 15 * C8, w: 3 * C8, h: 3 * C8 }, ART_SIZE = 26;   // the art's cells (art px, office coords); ~26 art px with its frame
+const ART_CELLS = { x: 45 * C8, y: 15 * C8, w: 3 * C8, h: 3 * C8 }, ART_SIZE = 26, ART_MIN = 72;   // the art's cells (art px, office coords); ~26 art px with its frame, never under 72 screen px
 let artFix = null;   // small canvas to redraw people standing in front of the art
+function drawArtCabinet_(c, ox, oy, S) {   // outside lunch: a white storage cabinet like the desks, in the QR's exact square
+  const u = Math.max(1, Math.round(scale)), d = WHITE_DESK, fh = 3 * u, top = S - fh - u;   // u = one art px; fh = front face
+  c.fillStyle = OUT; c.fillRect(ox, oy, S, S);
+  c.fillStyle = d.top; c.fillRect(ox + u, oy + u, S - 2 * u, top - u);                                       // top
+  c.fillStyle = d.frame; c.fillRect(ox + u, oy + u, S - 2 * u, u); c.fillRect(ox + u, oy + u, u, top - u); c.fillRect(ox + S - 2 * u, oy + u, u, top - u);   // edges
+  c.fillStyle = '#fbf5ea'; c.fillRect(ox + 2 * u, oy + 2 * u, S - 4 * u, u);                                  // lit back edge
+  c.fillStyle = shade(d.top, 0.94); c.fillRect(ox + 2 * u, oy + top - u, S - 4 * u, u);                      // front edge in shade
+  c.fillStyle = d.front; c.fillRect(ox + u, oy + top, S - 2 * u, fh);                                          // doors
+  c.fillStyle = shade(d.front, 1.14); c.fillRect(ox + u, oy + top, S - 2 * u, u);
+  c.fillStyle = shade(d.front, 0.8); c.fillRect(ox + Math.round(S / 2) - Math.ceil(u / 2), oy + top, u, fh);   // door seam
+  c.fillStyle = shade(d.front, 1.25);
+  for (const hx of [Math.round(S / 2) - 3 * u, Math.round(S / 2) + 2 * u]) c.fillRect(ox + hx, oy + top + u, u, u);   // handles
+  c.fillStyle = shade(d.top, 0.9);
+  for (const [bx, by, bw, bh] of [[0.14, 0.2, 0.3, 0.26], [0.56, 0.3, 0.24, 0.2]]) c.fillRect(ox + Math.round(S * bx), oy + Math.round(top * by), Math.round(S * bw), Math.round(top * bh));   // a couple of paper trays on top
+}
 function drawSecretArt_() {
-  // the plate fills a thin 2 px frame: modules sized to ~26 art px overall, but never under 2 screen px (so on small
-  // windows it grows past the cells); right edge on the right wall, centred on the cells vertically
-  const A = ART_CELLS, m = Math.max(2, Math.round((ART_SIZE * scale - 4) / QR_ALL)), size = QR_ALL * m, outer = size + 4;
+  // the QR fills a thin 2 px frame: ~ART_SIZE art px overall, but never under ART_MIN screen px (so on small windows
+  // it grows past the cells); right edge on the right wall, centred on the cells vertically
+  const A = ART_CELLS, size = Math.max(ART_MIN, Math.round(ART_SIZE * scale) - 4), outer = size + 4;
   const ox = Math.round((OX + A.x + A.w) * scale) - outer, oy = Math.round((OY + A.y + A.h / 2) * scale - outer / 2), x = ox + 2, y = oy + 2;
   const c = mctx;
   c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.imageSmoothingEnabled = false;
   c.fillStyle = 'rgba(40,20,8,0.28)'; c.fillRect(ox, oy + Math.round(scale), outer, outer);   // shadow (straight down: it's on the wall)
-  c.fillStyle = '#2b2627'; c.fillRect(ox, oy, outer, outer);                                  // frame
-  c.drawImage(secretArt_(m), x, y);
+  if (world.hour >= 12 && world.hour < 13) {   // lunch hour: the QR
+    c.fillStyle = QR_COL.frame; c.fillRect(ox, oy, outer, outer);                              // frame: desk-edge brown
+    c.drawImage(secretArt_(size), x, y);
+    const p = size / QR_ALL, blink = (TIME * 1.5 | 0) % 2;   // the eyes' standby lights, in step with the sleeping monitors
+    c.fillStyle = blink ? '#f5b93a' : '#5a4a20';
+    for (const [ex, ey] of [[0, 0], [QR_N - 7, 0], [0, QR_N - 7]]) { c.beginPath(); c.arc(x + (QR_Q + ex + 4.3) * p, y + (QR_Q + ey + 4.3) * p, 0.32 * p, 0, Math.PI * 2); c.fill(); }
+  } else drawArtCabinet_(c, ox, oy, outer);
   c.restore();
   const art = { x: ox / scale - OX, y: oy / scale - OY, w: outer / scale };   // where it landed, in art px
   // people / dogs in front of it: draw them again over the art (same sprites, clipped to its spot)
@@ -1643,6 +1673,15 @@ function drawPropRaw_(p) {
     }
     case 'silver': break;   // nothing in the scene: drawSecretArt_ paints the QR art over these cells
     case 'storage': {   // black storage cabinet against the wall
+      if (h > w) {   // against the left wall, doors facing right: its top, the door seam and handles on the right, its front end
+        const top = bottom - 22, end = bottom - 6;
+        R(x - 1, top - 1, 9, bottom - top + 1, OUT); R(x, top, 7, end - top, '#3d3632'); R(x, top, 7, 1, '#544a43'); R(x, top, 1, end - top, '#544a43');
+        R(x + 6, top + 1, 1, end - top - 1, '#231d1a'); R(x + 7, top, 1, end - top, '#3a3e4a');   // door edge, lit door face
+        const mid = Math.round((top + end) / 2); R(x + 7, mid - 4, 1, 3, '#9aa4b0'); R(x + 7, mid + 1, 1, 3, '#9aa4b0');   // handles
+        R(x, end, 8, 6, '#332d2a'); R(x, end, 8, 1, '#231d1a');                                       // front end
+        R(x + 1, top + 2, 4, 5, '#c8b48a'); R(x + 1, top + 9, 4, 3, '#3b6fd6');                       // boxes on top
+        break;
+      }
       const top = bottom - 18, cw = w * C8;
       R(x - 1, top - 1, cw + 2, 19, OUT); R(x, top, cw, 17, '#332d2a'); R(x, top, cw, 4, '#3d3632'); R(x, top, cw, 1, '#544a43'); R(x, top + 4, cw, 1, '#231d1a');
       R(x + 1, top + 6, 1, 10, '#3a3e4a'); R(x + cw / 2 + 1, top + 6, 1, 10, '#3a3e4a');   // lit door edges
