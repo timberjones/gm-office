@@ -4,6 +4,11 @@
 //   /ws?uid=1234   someone driving their own character (gm-user.html): sends hello / step / hb / look, which go to
 //                  everyone else. Looks are also saved here, so every page that connects later gets them.
 // When a driver's socket closes, everyone hears { t: 'bye', uid } and that character goes back to its routine.
+//   POST /count    a laptop in the office posts its headcount estimate ({ n }, Bearer COUNT_TOKEN, a Worker secret).
+//                  Before 2 pm the room keeps the day's highest number (n); from 2 pm on, the lowest afternoon number
+//                  (pm.n) and the Eastern hour of the latest afternoon post (pm.h, about when that laptop left).
+//                  Everyone gets { t: 'count', day, n, pm }; pages use it as today's headcount (and wind the afternoon
+//                  down from pm to 6 pm), and fall back to the weekday guess when there's none for today.
 // Hibernation API: idle sockets cost nothing, and 'ping' -> 'pong' is answered without waking the object.
 import { DurableObject } from 'cloudflare:workers';
 
@@ -11,6 +16,12 @@ const ORIGINS = [/^https:\/\/timberjones\.github\.io$/, /^http:\/\/(localhost|12
 const DIRS = ['up', 'down', 'left', 'right'];
 const GX = 48, GY = 28;                   // office grid (gm-office.html)
 const MAX_PER_SEC = 40, MAX_LEN = 400;
+const DAY_FMT = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Toronto', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' });
+function eastern() {   // { day, h }: the same day key as zoneDay() in gm-office.html (e.g. 2026-10-5), and the hour as 15.5
+  const o = {}; for (const p of DAY_FMT.formatToParts(new Date())) o[p.type] = p.value;
+  return { day: `${o.year}-${o.month}-${o.day}`, h: +o.hour + o.minute / 60 };
+}
+const PM_FROM = 14;   // posts from 2 pm on are afternoon counts
 const HEX = /^#[0-9a-f]{6}$/i, STYLES = ['short', 'spiky', 'long', 'bun'];
 function cleanLook(l) {   // only the fields gm-office.html draws, checked; null if it isn't a look
   if (!l || typeof l !== 'object' || !HEX.test(l.hair) || !HEX.test(l.shirt) || !HEX.test(l.pants)) return null;
@@ -25,6 +36,11 @@ function cleanLook(l) {   // only the fields gm-office.html draws, checked; null
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
+    if (url.pathname === '/count') {
+      if (req.method !== 'POST') return new Response('POST only', { status: 405 });
+      if (!env.COUNT_TOKEN || req.headers.get('Authorization') !== 'Bearer ' + env.COUNT_TOKEN) return new Response('forbidden', { status: 403 });
+      return env.OFFICE.get(env.OFFICE.idFromName('office')).fetch(req);
+    }
     if (url.pathname !== '/ws') return new Response('gm-office relay\n', { headers: { 'content-type': 'text/plain' } });
     if (req.headers.get('Upgrade') !== 'websocket') return new Response('expected a websocket', { status: 426 });
     const origin = req.headers.get('Origin') || '';
@@ -42,14 +58,34 @@ export class Office extends DurableObject {
   }
 
   async fetch(req) {
+    if (new URL(req.url).pathname === '/count') return this.postCount_(req);
     const uid = new URL(req.url).searchParams.get('uid');
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server, uid ? ['ctl', 'u' + uid] : ['view']);
     server.serializeAttachment({ uid: uid || null, last: null, n: 0, t0: 0 });
     const looks = {};
     for (const [k, v] of await this.ctx.storage.list({ prefix: 'look:' })) looks[k.slice(5)] = v;
-    server.send(JSON.stringify({ t: 'state', online: this.online_(server), looks }));   // who's driving right now and where, and everyone's look
+    server.send(JSON.stringify({ t: 'state', online: this.online_(server), looks, count: await this.count_() }));   // who's driving right now and where, and everyone's look
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async count_() {   // today's headcount, or null
+    const c = await this.ctx.storage.get('count');
+    return c && c.day === eastern().day ? c : null;
+  }
+
+  async postCount_(req) {
+    let m;
+    try { m = await req.json(); } catch (e) { return new Response('bad json', { status: 400 }); }
+    const n = Number(m && m.n);
+    if (!Number.isInteger(n) || n < 0 || n > 200) return new Response('bad n', { status: 400 });
+    const old = await this.count_(), e = eastern();
+    const c = { day: e.day, n: old ? old.n : null, pm: old ? old.pm : null, last: n, at: Date.now() };
+    if (e.h < PM_FROM) c.n = Math.max(n, c.n || 0);                                         // morning: the day's peak
+    else c.pm = { n: c.pm ? Math.min(n, c.pm.n) : n, h: Math.round(e.h * 100) / 100 };      // afternoon: the lowest, and when
+    await this.ctx.storage.put('count', c);
+    this.broadcast_(null, { t: 'count', ...c });
+    return Response.json(c);
   }
 
   online_(except) {

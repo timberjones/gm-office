@@ -172,7 +172,8 @@ function knownSeat(uid) {   // [seat, default look] for an id the office knows, 
     const p = list.find(p => String(p.uid) === String(uid));
     if (!p) continue;
     const seat = deskSeats.find(s => s.code === code);
-    return seat ? [seat, p.look || ROLES[seat.role].look] : null;
+    if (!seat) return [null, p.look || null];   // known but no desk of their own (the floater): comes in through the door
+    return [seat, p.look || ROLES[seat.role].look];
   }
   return null;
 }
@@ -197,7 +198,7 @@ function startAs(uid) {
   if (home) Object.assign(me, { tx: home.x, ty: home.y, seat: home, dir: home.face });   // known: you're at your desk (the TV walks you in if you weren't)
   else Object.assign(me, { tx: 0, ty: 25 });                                              // new: you come in through the door
   me.px = me.tx * C8; me.py = me.ty * C8;
-  $('who').textContent = (home ? 'User ' : 'New person ') + uid;
+  $('who').textContent = (k ? 'User ' : 'New person ') + uid;
   $('pick').classList.add('hidden'); $('play').classList.remove('hidden');
   buildLooksUI(); updateWhere();
   relay.stop = false; relayConnect();
