@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GM Office</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #0a0e2a; overflow: hidden; cursor: none; }
+  html, body { margin: 0; height: 100%; background: #0a0e2a; overflow: hidden; }
   canvas { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; image-rendering: crisp-edges; }
 </style>
 </head>
@@ -2319,6 +2319,35 @@ if (params.get('dogs') === '1') dogs.forEach(d => { d.follow = true; });   // pr
 relayConnect_();
 resize();
 addEventListener('resize', resize);
+// Click someone and they answer with a quick hello (anyone answers a click, even interns and HR).
+const CLICK_LINES = ["Hi, what's up?", "I'm busy!", 'Trying to find a tree, want to help?', 'Hey there!', 'Oh, hi!',
+  'Can it wait? Deadline today.', 'Need something?', "Don't tell anyone, but I'm on my third coffee.", 'Ask me after lunch.'];
+function personAt_(e) {   // the front-most person under the mouse, or null
+  const dpr = window.devicePixelRatio || 1, x = e.clientX * dpr / scale - OX, y = e.clientY * dpr / scale - OY;
+  let best = null;
+  for (const w of [...workers, courier]) {
+    if (!w.present || w.hidden || !w.frames) continue;
+    const h = w.seated ? 13 : 17;   // sprite box from the top of the head down
+    if (x >= w.headX - 6 && x <= w.headX + 6 && y >= w.headTop - 1 && y <= w.headTop + h && (!best || w.headTop > best.headTop)) best = w;
+  }
+  return best;
+}
+// The cursor hides after a few seconds without movement (and on load), so it doesn't sit on the TV picture.
+let cursorT = 0;
+cv.style.cursor = 'none';
+cv.addEventListener('mousemove', e => {
+  cv.style.cursor = personAt_(e) ? 'pointer' : 'default';
+  clearTimeout(cursorT); cursorT = setTimeout(() => { cv.style.cursor = 'none'; }, 3000);
+});
+cv.addEventListener('click', e => {
+  const w = personAt_(e);
+  if (!w) return;
+  const any = () => CLICK_LINES[Math.floor(Math.random() * CLICK_LINES.length)];   // Math.random: leave the seeded sim untouched
+  let text = any();
+  for (let k = 0; k < 4 && speakingNow_(w) && speakingNow_(w).text === text; k++) text = any();   // no repeat on a double click
+  if (w.role === 'am') text = text.toUpperCase();   // account managers are loud
+  say_(w, text, 3 + text.length * 0.06, true);
+});
 addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (k === 'n') forcedHour = 22;
