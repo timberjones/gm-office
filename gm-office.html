@@ -1532,8 +1532,8 @@ function drawProp(p) {
 //    a sleeping monitor, whose standby light blinks with theirs (a small dot off the centre lines, so scans still work).
 // All modules go in one path and one fill, so neighbours join without seams. Drawn on the screen canvas after the
 // scene, and anyone standing in front of it is drawn again.
-// QR version 3-M of https://timberjones.github.io/gm-office/u, one hex number per row (29 modules, top bit = left).
-const SECRET_QR = '1fd2487f 10410541 17568f5d 1749ce5d 174fc45d 10528141 1fd5557f 00017300 14653325 18b63763 0973ab6d 102a7788 157c5161 1415b2e3 116926d1 00375270 1f4c1661 08b96b67 1f7aa299 07105150 1dd4d3fa 0019391d 1fd7ed51 10463712 174ef3fa 174bb99d 1751a093 1040b5c8 1fd99511';
+// QR version 3-M of https://timberjones.github.io/u, one hex number per row (29 modules, top bit = left).
+const SECRET_QR = '1fd7e37f 10539c41 1749125d 17526a5d 174c525d 1046b341 1fd5557f 001f3a00 16e2ae4b 0ab5e3f1 164f9db6 162b15c1 1a7a6a0c 132b5bc7 1159bb67 050356e2 0b7760ba 02a1592e 166be9f4 07aec874 0b42dffc 00132d1f 1fda5b5a 1050c51a 174d39f5 175830ba 1754cd25 1048115a 1fdaa3ca';
 const QR_ROWS = SECRET_QR.split(' ').map(h => parseInt(h, 16)), QR_N = QR_ROWS.length, QR_Q = 2, QR_ALL = QR_N + QR_Q * 2;
 const QR_COL = { bg: WHITE_DESK.top, dot: '#4f3626', eye: '#a4502a', eyeDot: SCREEN.off, frame: WHITE_DESK.frame };   // desk top, wood brown, rust, a sleeping screen, desk edge
 const qrEye_ = (x, y) => (x < 7 && y < 7) || (x >= QR_N - 7 && y < 7) || (x < 7 && y >= QR_N - 7);
