@@ -1,11 +1,62 @@
 # GM Office
 
-Pixel-art idle screen of the office for the office TV: the team works, takes calls, grabs coffee, holds meetings and eats lunch on Eastern time, with live weather in the windows.
+A pixel-art idle screen of the office, made for the office TV. The team works, takes calls, grabs coffee, holds meetings and eats lunch on Eastern time, and the windows show the live weather. You can click anyone to say hi.
 
-Open `gm-office.html` (or the site root) full screen. Press F for fullscreen.
+- **TV:** https://timberjones.github.io (press F for fullscreen)
+- **User page:** https://timberjones.github.io/u (walk your own character around the TV from your phone or computer)
 
-Useful URL options: `?time=14:30` (start the clock at a time), `?day=tue` (preview a weekday), `?weather=snow`, `?people=20`, `?dogs=1`. The full list is at the top of `gm-office.html`.
+## URL parameters
 
-Walk your own character around the TV: open `gm-user.html`, type your user id (or `1111` / "I'm new here" to come in as someone new), then use the arrow keys or the on-screen d-pad (tap = one step, hold = keep walking) and the Sit button. You can also change hair, skin, cap, beard, height and clothes; looks are saved and show on the TV. Moves and looks go through the relay in `relay/` (a Cloudflare Worker: `cd relay && npx wrangler@4 deploy`). Close the page and your character goes back to its routine, or walks out if it isn't in today. `gm-user.html` loads the people sprites and office layout from `gm-office.html` (the code between its `@shared` markers).
+Add these to the TV page, for example `timberjones.github.io/?time=12:30&weather=snow`.
 
-Secret: over lunch only (12-1 pm Eastern), the white storage cabinet on the right wall (under the two-seat desk) turns into a small QR code that opens the player page (via the short link `u.html`): scan it from about 10-30 cm. Preview it with `?time=12:30`.
+**Time and day**
+- `?time=14:30` starts the clock at that time and lets it run (`2:30pm` and `14` also work)
+- `?hour=14` freezes the clock at that hour (decimals are OK, for example `14.5`)
+- `?speed=60` runs the clock 60 times faster
+- `?day=tue` previews another weekday (`mon` to `sun`)
+- `?tz=America/Chicago` sets the clock's time zone (default `America/Toronto`)
+
+**People and scene**
+- `?people=20` sets today's headcount (by default Tue/Thu fills 80-95% of the 31 desks, Mon/Wed/Fri 10-30%, and weekends are empty)
+- `?weather=rain` forces `sun`, `cloud`, `rain` or `snow` (default: live Montreal weather from the feed)
+- `?dogs=1` brings the poodles in right away (they're only around 9:00-16:30)
+- `?delivery=1` sends a food courier in right away
+- `?seed=N` fixes the randomness so the day plays out the same way each time
+
+**Speech and live data**
+- `?chat=0` turns off speech bubbles
+- `?feed=0` doesn't read the activity feed (`?feed=<url>` uses a different one)
+- `?relay=0` doesn't listen to the relay, so nobody can drive a character on this screen (`?relay=<wss url>` uses a different one)
+- `?user=1234` (or `?user_1234`) opens the user page for that id
+
+**Look and performance**
+- `?scale=4` forces the pixel scale (default: as big as fits the screen)
+- `?fps=30` sets the frame rate (default 60; lower it for a weak TV)
+- `?lofi=0` turns off the warm tint and vignette
+- `?hd=0` uses plain 1x sprites, without the HD detail or outlines
+- `?ss=2` sets the scene's supersampling level
+- `?smooth=1` adds GPU Scale2x smoothing to the final upscale
+- `?round=1` rounds the sprite corners (Scale2x)
+- `?style=classic` uses navy outlines instead of warm brown
+
+**User page**
+- `u?id=1234` opens the user page already signed in as that id
+
+**Keys on the TV page:** N night, D day, C back to the real clock, W cycle the weather, B someone says a line now, F fullscreen.
+
+## User page
+
+Open `/u`, type your user id (or `1111`, or "I'm new here", to come in as someone new), then walk with the arrow keys or the on-screen d-pad (tap for one step, hold to keep walking) and use the Sit button. You can also change hair, skin, cap, beard, height and clothes. Your look is saved and shows on every TV. Close the page and your character goes back to its usual routine, or walks out if it isn't in today.
+
+## Tech stack
+
+- **Static pages on GitHub Pages.** `gm-office.html` (the TV) and `gm-user.html` (the user page) are each a single self-contained HTML file using a plain canvas, with no build step or framework. `index.html` and `u.html` are short redirects. The user page reuses the TV's sprites and office layout by loading the code between the `@shared` markers in `gm-office.html`.
+- **Activity feed (Google Apps Script).** A Sheet-bound script pulls quote, order and delivery activity from Redash every 6 hours, adds the weather from OpenWeather, and serves it as public JSON with no emails in it. The TV turns it into speech bubbles and window weather.
+- **Live control (Cloudflare Worker + Durable Object).** The relay in [relay/](relay/) is how the user page moves a character on the TV in real time:
+  - A Durable Object is a single, stateful instance of code that Cloudflare runs somewhere close to its users. We use exactly one, named `office`, as a chat room that every page connects to.
+  - Every TV holds a WebSocket to it and only listens. The user page connects with `?uid=<id>` and sends its steps, sits and look changes. The room passes each message on to everyone else.
+  - Each look is saved in the Durable Object's built-in SQLite storage. A TV that connects later gets everyone's current look, plus who is driving right now and where they are standing.
+  - When a user's socket closes, the room tells everyone `bye` and that character goes back to its routine.
+  - It uses the WebSocket Hibernation API, so idle connections cost nothing and keep-alive pings are answered without waking the object. That keeps it on Cloudflare's free plan.
+  - The Worker only accepts connections from `timberjones.github.io`, localhost and local files. It checks every message (ids, grid bounds, colours) and rate-limits each user.
+  - To deploy: `cd relay && npx wrangler@4 deploy`.
