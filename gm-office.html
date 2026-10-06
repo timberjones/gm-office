@@ -1109,7 +1109,19 @@ function dogFrames(coat, coatShade, collar) {   // no collar: that strip is just
 const DOG_ID = '101';
 const DOG_LOOK = { dog: true, coat: '#f6f4ee', collar: '#d9453b' };
 const dogFramesFor_ = l => dogFrames(l.coat, shade(l.coat, 0.82), l.collar);
-const framesFor_ = l => l && l.dog ? dogFramesFor_(l) : buildFrames(l);   // a person or a dog
+// A person's or a dog's sprites (~100 small canvases), reused for a look we've already built: a relay reconnect
+// re-sends everyone's look and couriers come back, and old TV browsers are slow to free canvas memory, so
+// rebuilding each time slowly ran the office TV out of memory. Keeps the 40 most recent looks.
+const FRAME_CACHE = new Map();
+function framesFor_(l) {
+  const key = JSON.stringify(l);
+  let F = FRAME_CACHE.get(key);
+  if (F) FRAME_CACHE.delete(key);   // re-insert: most recently used last
+  else F = l && l.dog ? dogFramesFor_(l) : buildFrames(l);
+  FRAME_CACHE.set(key, F);
+  if (FRAME_CACHE.size > 40) FRAME_CACHE.delete(FRAME_CACHE.keys().next().value);
+  return F;
+}
 // @shared-end
 const dogs = [dogFrames('#f6f4ee', '#d4d0c6'), dogFrames('#8a5a32', '#6b4126')].map(frames =>
   ({ frames, present: false, px: 0, py: 0, tx: -1, ty: -1, dir: 'right', walkT: 0, pose: 'stand', bubble: null, headX: 0, headTop: 0, follow: false }));
@@ -1171,10 +1183,13 @@ function* courierLife() {
     } else yield rnd(300, 900);
   }
 }
+let courierLooks = null, waterLooks = null;
 function* courierVisit() {
-  const look = { hair: pick(HAIRS), skin: irnd(0, 4), shirt: pick(['#ec8f2b', '#d9453b', '#22b573', '#2a2238']), pants: pick(PANTS), style: 'short', hat: pick(['#d9453b', '#22b573', '#2a2238', '#ec8f2b']) };
+  // a few regular couriers rather than a brand-new person every visit (their sprites are built once and reused)
+  courierLooks = courierLooks || [0, 1, 2, 3, 4, 5].map(() => ({ hair: pick(HAIRS), skin: irnd(0, 4), shirt: pick(['#ec8f2b', '#d9453b', '#22b573', '#2a2238']), pants: pick(PANTS), style: 'short', hat: pick(['#d9453b', '#22b573', '#2a2238', '#ec8f2b']) }));
+  const look = pick(courierLooks);
   const row = chance(0.5) ? 25 : 26;
-  Object.assign(courier, { frames: buildFrames(look), look, present: true, hidden: false, bag: true, handed: false, leaving: false, px: hallX(), py: row * C8, tx: -1, ty: -1, pose: 'walk' });
+  Object.assign(courier, { frames: framesFor_(look), look, present: true, hidden: false, bag: true, handed: false, leaving: false, px: hallX(), py: row * C8, tx: -1, ty: -1, pose: 'walk' });
   yield* walkStraight(courier, 0, row * C8);
   courier.tx = 0; courier.ty = row;
   const arrived = TIME, end = TIME + rnd(70, 120);
@@ -1243,9 +1258,10 @@ function* waterLife() {
   }
 }
 function* waterVisit() {
-  const look = { hair: pick(HAIRS), skin: irnd(0, 4), shirt: pick(['#3b6fd6', '#6aa0c8', '#2f3a5c']), pants: pick(PANTS), style: 'short', hat: pick(['#3b6fd6', '#f3ecdf', null]) };
+  waterLooks = waterLooks || [0, 1, 2].map(() => ({ hair: pick(HAIRS), skin: irnd(0, 4), shirt: pick(['#3b6fd6', '#6aa0c8', '#2f3a5c']), pants: pick(PANTS), style: 'short', hat: pick(['#3b6fd6', '#f3ecdf', null]) }));
+  const look = pick(waterLooks);   // the same few delivery people
   const row = chance(0.5) ? 25 : 26, spot = SPOTS.water.spots[0];
-  Object.assign(waterGuy, { frames: buildFrames(look), look, present: true, hidden: false, jug: true, px: hallX(), py: row * C8, tx: -1, ty: -1, pose: 'walk' });
+  Object.assign(waterGuy, { frames: framesFor_(look), look, present: true, hidden: false, jug: true, px: hallX(), py: row * C8, tx: -1, ty: -1, pose: 'walk' });
   yield* walkStraight(waterGuy, 0, row * C8);
   waterGuy.tx = 0; waterGuy.ty = row;
   yield* walkTo(waterGuy, spot.x, spot.y);
@@ -2590,7 +2606,7 @@ function applySnap_(m) {
   const guest = (o, e) => {   // a courier: look sent along, since it's picked fresh each visit
     if (!(Array.isArray(e) && e[9] && typeof e[9] === 'object')) { o.present = false; return; }
     const key = JSON.stringify(e[9]);
-    if (key !== o.lookKey) { try { o.frames = buildFrames(e[9]); o.look = e[9]; o.lookKey = key; } catch (er) { o.frames = null; } }
+    if (key !== o.lookKey) { try { o.frames = framesFor_(e[9]); o.look = e[9]; o.lookKey = key; } catch (er) { o.frames = null; } }
     if (o.frames) applyEnt_(o, e); else o.present = false;
   };
   guest(courier, m.c);
