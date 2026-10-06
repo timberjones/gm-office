@@ -749,7 +749,8 @@ const ROLES = {
   ceo: { acts: DESKBOUND, talk: 0.5, fixed: true, in: [7.9, 8.4], out: [17.0, 17.6], lunch: 'desk',
     look: { hair: '#8a5a32', skin: 0, shirt: '#f3ecdf', pants: '#3a3f55', style: 'short', build: 'tall' } },
   buyer: { talk: 3, acts: [['type', 26], ['call', 32], ['walkcall', 8], ['chat', 10], ['island', 5], ['coffee', 6], ['water', 3], ['fridge', 2], ['sink', 1], ['wc', 3], ['meeting', 1]] },
-  am: { talk: 1.5, acts: ACTS },
+  // account managers' own lines (on top of their feed lines); shown in ALL CAPS like everything they say
+  am: { talk: 1.5, acts: ACTS, lines: ["Hi we're a tree and shrub provider", "Hi, we're Gomaterials, GO-MATERIALS", 'Gimme your list!'] },
   intern: { talk: 0, acts: [['type', 72], ['coffee', 6], ['water', 4], ['wc', 3], ['fridge', 2], ['sink', 2]] },
   staff: { talk: 1, acts: ACTS },
   product: { talk: 1, fixed: true, days: ['tue', 'thu'], acts: ACTS, look: { hair: '#1a1a24', skin: 1, shirt: '#22b573', pants: '#2f3a5c', style: 'short' } },
