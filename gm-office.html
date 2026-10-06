@@ -12,6 +12,41 @@
 <body>
 <canvas id="c"></canvas>
 <script>
+// Old TV browsers (e.g. a 2016-2019 Samsung's built-in one, Chrome ~49-63): plain ES5, runs before the page.
+// Fills in the few newer functions the page uses, and if the page still can't start, says why on screen
+// (with the browser's user agent) instead of staying blank.
+(function () {
+  var t0 = Date.now(), shown = false;
+  window.onerror = function (msg, src, line) {
+    if (shown || Date.now() - t0 > 20000) return;   // only startup failures; later hiccups stay off the TV
+    shown = true;
+    var d = document.createElement('div');
+    d.style.cssText = 'position:fixed;left:0;right:0;top:0;padding:24px;font:20px sans-serif;color:#fff;background:#7a1f1f;z-index:9';
+    d.textContent = "GM Office couldn't start on this browser: " + msg + ' (line ' + line + ') | ' + navigator.userAgent;
+    document.body.appendChild(d);
+  };
+  if (!Array.prototype.flatMap) Array.prototype.flatMap = function (f, t) { return [].concat.apply([], this.map(f, t)); };
+  if (!String.prototype.padStart) String.prototype.padStart = function (n, c) { var s = String(this); c = c == null ? ' ' : String(c); while (s.length < n) s = c + s; return s.slice(s.length - Math.max(n, String(this).length)); };
+  if (!Object.entries) Object.entries = function (o) { return Object.keys(o).map(function (k) { return [k, o[k]]; }); };
+  var DTF = window.Intl && Intl.DateTimeFormat;
+  if (DTF && !DTF.prototype.formatToParts) {   // one cached single-field formatter per field
+    var cache = {};
+    DTF.prototype.formatToParts = function (d) {
+      var ro = this.resolvedOptions(), out = [], keys = ['weekday', 'year', 'month', 'day', 'hour', 'minute', 'second'];
+      for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        if (!ro[k]) continue;
+        var id = ro.timeZone + '|' + k + '|' + ro[k];
+        if (!cache[id]) { var o = { timeZone: ro.timeZone }; o[k] = ro[k]; if (k === 'hour') o.hour12 = false; cache[id] = new DTF('en-US', o); }
+        var v = cache[id].format(d);
+        out.push({ type: k, value: k === 'weekday' ? v : String(parseInt(v.replace(/\D/g, ''), 10)) });
+      }
+      return out;
+    };
+  }
+})();
+</script>
+<script>
 'use strict';
 /*
   GM Office idle screen (office TV).
@@ -68,7 +103,7 @@ const hash = (x, y) => ((Math.imul(x | 0, 73856093) ^ Math.imul(y | 0, 19349663)
 { const u = params.get('user') || ([...params.keys()].find(k => /^user_\d+$/.test(k)) || '').slice(5); if (u) location.replace('gm-user.html?id=' + encodeURIComponent(u)); }
 
 // ---------------------------------------------------------------- clock (Eastern time)
-const tzFmt = new Intl.DateTimeFormat('en-US', { timeZone: TZ, hourCycle: 'h23', hour: 'numeric', minute: 'numeric', second: 'numeric', month: 'numeric' });
+const tzFmt = new Intl.DateTimeFormat('en-US', { timeZone: TZ, hourCycle: 'h23', hour12: false, hour: 'numeric', minute: 'numeric', second: 'numeric', month: 'numeric' });
 function zoneNow() { const o = {}; for (const p of tzFmt.formatToParts(new Date())) o[p.type] = +p.value; return { h: (o.hour % 24) + o.minute / 60 + o.second / 3600, month: o.month }; }
 const dayFmt = new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'short', year: 'numeric', month: 'numeric', day: 'numeric' });
 const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -117,34 +152,37 @@ const weatherForced = WEATHERS.includes(params.get('weather'));
 // Public and email-free. ?feed=0 turns it off, ?feed=<url> overrides.
 const FEED_URL = params.get('feed') === '0' ? null : (params.get('feed') || 'https://script.google.com/macros/s/AKfycbxuD6OJJPCtIqPTPoDGa4DD95pH6j_lNowkOir2TzLUx3K0xCwuY3PsC0sriTjo0Aq3VA/exec');
 let feed = null;   // { ok, updated, feed: [ { user_id, speech: [...] }, ... ] }
-async function getJson_(url, ms) {   // null on any failure (offline, timeout, non-2xx, bad JSON)
-  try {
-    const ac = new AbortController(), tm = setTimeout(() => ac.abort(), ms);
-    const r = await fetch(url, { signal: ac.signal, cache: 'no-store' });
-    clearTimeout(tm);
-    return r.ok ? await r.json() : null;
-  } catch (e) { return null; }
+// Promises rather than async/await, so older TV browsers can run the page.
+function getJson_(url, ms) {   // resolves null on any failure (offline, timeout, non-2xx, bad JSON)
+  if (typeof fetch !== 'function') return Promise.resolve(null);
+  const ac = typeof AbortController === 'function' ? new AbortController() : null;
+  let tm;
+  const timeout = new Promise(res => { tm = setTimeout(() => { if (ac) ac.abort(); res(null); }, ms); });
+  const req = fetch(url, ac ? { signal: ac.signal, cache: 'no-store' } : { cache: 'no-store' })
+    .then(r => r.ok ? r.json() : null).catch(() => null);
+  return Promise.race([req, timeout]).then(j => { clearTimeout(tm); return j; });
 }
 // Start the download right away, before any sprites are built, so it arrives while the page sets up.
 let feedReq = FEED_URL ? getJson_(FEED_URL, 15000) : null;
-async function fetchFeed() {   // true = got it (or nothing to do), false = try again soon
-  if (!FEED_URL) return true;
-  const j = await (feedReq || getJson_(FEED_URL, 15000)); feedReq = null;
-  if (!(j && j.ok && Array.isArray(j.feed))) return false;   // keep the last good feed + weather
-  feed = j;
-  const wx = j.weather && j.weather.now;
-  if (!weatherForced && WEATHERS.includes(wx) && wx !== weather) { weather = wx; exteriorDirty = true; }
-  return true;
+function fetchFeed() {   // resolves true = got it (or nothing to do), false = try again soon
+  if (!FEED_URL) return Promise.resolve(true);
+  const req = feedReq || getJson_(FEED_URL, 15000); feedReq = null;
+  return req.then(j => {
+    if (!(j && j.ok && Array.isArray(j.feed))) return false;   // keep the last good feed + weather
+    feed = j;
+    const wx = j.weather && j.weather.now;
+    if (!weatherForced && WEATHERS.includes(wx) && wx !== weather) { weather = wx; exteriorDirty = true; }
+    return true;
+  });
 }
 // Poll every `every` ms once it works; until then retry fast (30 s, 1, 2, 4, then every 5 min) so a TV that
 // boots before the Wi-Fi is up doesn't sit without speech / weather for 15 minutes.
 function keepFresh_(fn, every) {
   let retry = 30000;
-  const run = async () => {
-    const ok = await fn();
+  const run = () => Promise.resolve(fn()).catch(() => false).then(ok => {
     setTimeout(run, ok ? every : retry);
     retry = ok ? 30000 : Math.min(retry * 2, 5 * 60 * 1000);
-  };
+  });
   run();
 }
 
