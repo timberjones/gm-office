@@ -2725,6 +2725,23 @@ addEventListener('keydown', e => {
   else if (k === 'f') toggleFullscreen_();
 });
 keepFresh_(fetchFeed, 15 * 60 * 1000);   // speech changes every 6 h, the weather every 15 min
+// New version published? Every 5 min, ask GitHub Pages for this page's ETag (a HEAD request, nothing downloaded)
+// and reload when it changes, so the TV picks up updates without anyone touching it. Only after a successful
+// check (so the network is up), and never from a local file.
+let pageTag = null;
+function checkForUpdate_() {
+  if (typeof fetch !== 'function' || location.protocol === 'file:') return;
+  fetch(location.pathname + '?check=' + Date.now(), { method: 'HEAD', cache: 'no-store' })
+    .then(r => r.ok ? r.headers.get('etag') || r.headers.get('last-modified') : null)
+    .then(tag => { if (!tag) return; if (pageTag == null) pageTag = tag; else if (tag !== pageTag) reloadFresh_(); })
+    .catch(() => {});
+}
+function reloadFresh_() {   // a new ?v= so the browser can't hand back its cached copy (Pages lets it keep one 10 min)
+  const q = location.search.replace(/([?&])v=[^&]*&?/, '$1').replace(/[?&]$/, '');
+  location.replace(location.pathname + (q ? q + '&' : '?') + 'v=' + Date.now() + location.hash);
+}
+checkForUpdate_();
+setInterval(checkForUpdate_, 5 * 60 * 1000);
 setInterval(() => { MONTH = zoneNow().month || MONTH; }, 3600 * 1000);
 setInterval(pickRoster, 60 * 1000);   // new day: a new set of people comes in
 let last = performance.now(), acc = 0;
