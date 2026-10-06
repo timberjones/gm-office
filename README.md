@@ -10,6 +10,7 @@ A pixel-art idle screen of the office, made for the office TV. The team works, t
 The office TV is an older Samsung running the page in its built-in browser.
 
 - **Fullscreen:** move the remote's pointer to an empty spot (not a person) and click. Click again to leave fullscreen. Enter (the remote's OK button) and F on a keyboard also toggle it.
+- **It looks after itself.** If drawing keeps failing for 30 seconds, the page restarts itself instead of sitting frozen, and it also restarts once a night around 3 am. A bad or unknown message from the relay is skipped instead of breaking the page.
 - **Updates install themselves.** Every 5 minutes the page asks GitHub Pages whether a new version has been published (a tiny request that downloads nothing) and reloads itself when one has, keeping its address options. A push reaches the TV within about 5-10 minutes, with nobody touching it.
 - **If the page can't start**, it shows a red bar with the error and the browser's details instead of a blank screen. Send that text along when asking for a fix.
 - **If the browser keeps closing or the screensaver kicks in,** a streaming stick running a kiosk browser (for example Fully Kiosk Browser on a Fire TV Stick) keeps the page up full time.

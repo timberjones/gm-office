@@ -2420,7 +2420,14 @@ function relayConnect_() {
   try { ws = new WebSocket(RELAY_URL + (RELAY_URL.includes('?') ? '&' : '?') + 'sync=1'); } catch (e) { return; }   // sync=1: we can lead or follow
   relay.ws = ws;
   ws.onopen = () => { relay.ok = true; relay.wait = 1000; };
-  ws.onmessage = e => { if (e.data === 'pong') return; let m; try { m = JSON.parse(e.data); } catch (er) { return; } onRelay_(m); };
+  ws.onmessage = e => {
+    if (e.data === 'pong') return;
+    let m; try { m = JSON.parse(e.data); } catch (er) { return; }
+    if (!m || typeof m.t !== 'string') return;
+    // steps from gm-user.html need a real cell; anything else malformed (or a message from a newer version) is ignored
+    if ((m.t === 'hello' || m.t === 'step') && !(Number.isInteger(m.x) && Number.isInteger(m.y))) return;
+    try { onRelay_(m); } catch (er) { if (window.console) console.warn('relay message skipped', m.t, er); }
+  };
   ws.onclose = () => {
     relay.ok = false; relay.ws = null;
     if (syncMode !== 'solo') { if (syncMode === 'follow') takeCharge_(); syncMode = 'solo'; }   // on our own until it's back
@@ -2768,9 +2775,15 @@ function frame(now) {
   acc += dt;
   if (acc < STEP) return;
   const s = Math.min(acc, 0.12); acc = 0;
-  step(s);
-  render();
+  try { step(s); render(); okAt = Date.now(); }
+  catch (e) {   // a bad frame: keep going, but if it keeps failing for 30 s, start fresh rather than sit frozen on the TV
+    if (Date.now() - okAt > 30000 && !healing) { healing = true; reloadFresh_(); }
+    if (window.console && Date.now() - warnedAt > 5000) { warnedAt = Date.now(); console.warn('frame failed', e); }
+  }
 }
+let okAt = Date.now(), warnedAt = 0, healing = false;
+// A fresh start once a night (about 3 am Eastern, when nobody's in), so an old TV browser never runs for weeks on end.
+setInterval(() => { const h = zoneNow().h; if (h >= 3 && h < 3.1 && performance.now() > 2 * 3600 * 1000 && location.protocol !== 'file:') reloadFresh_(); }, 60 * 1000);
 requestAnimationFrame(frame);
 document.addEventListener('visibilitychange', () => { last = performance.now(); acc = 0; });
 </script>
