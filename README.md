@@ -10,7 +10,7 @@ A pixel-art idle screen of the office, made for the office TV. The team works, t
 The office TV is an older Samsung running the page in its built-in browser.
 
 - **Fullscreen:** move the remote's pointer to an empty spot (not a person) and click. Click again to leave fullscreen. Enter (the remote's OK button) and F on a keyboard also toggle it.
-- **After an update**, add something new to the end of the address, like `timberjones.github.io/?v=4`, so the TV loads the new version instead of an old saved copy.
+- **After an update**, refreshing the page picks up the new version. Only if it seems stuck on the old one, add something new to the end of the address, like `timberjones.github.io/?v=4`.
 - **If the page can't start**, it shows a red bar with the error and the browser's details instead of a blank screen. Send that text along when asking for a fix.
 - **If the browser keeps closing or the screensaver kicks in,** a streaming stick running a kiosk browser (for example Fully Kiosk Browser on a Fire TV Stick) keeps the page up full time.
 
