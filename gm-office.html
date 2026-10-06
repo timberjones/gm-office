@@ -62,7 +62,7 @@
   The top windows and the alley show the live weather: sun, cloud, rain or snow.
 
   URL params:
-    (headcount follows the weekday in Eastern time: Tue/Thu 80-95% of the 31 desks, Mon/Wed/Fri 10-30%, weekends empty)
+    (headcount follows the weekday in Eastern time: Tue/Thu 80-95% of the 30 desks, Mon/Wed/Fri 10-30%, weekends empty)
     ?day=tue        preview another weekday              ?people=20  force today's headcount
     ?weather=rain   force sun | cloud | rain | snow     (default: live weather from the feed, Montreal)
     ?time=14:30     start the clock at that time and let it run (also 2:30pm, 14)
@@ -608,7 +608,8 @@ for (const [l, r, role] of [[14, 18, 'intern'], [24, 28, 'buyer'], [34, 38, 'buy
     deskSeats.push(addSeat(l, y, 'right', 'desk', pt ? { role: 'product', code: 'product-1', extraMon: true } : { role, code: role + '-' + (++islandCount[role]) }));
     deskSeats.push(addSeat(r, y, 'left', 'desk', { role, code: role + '-' + (++islandCount[role]) }));
   }
-[11, 13].forEach((y, i) => deskSeats.push(addSeat(45, y, 'right', 'desk', { role: 'buyer', code: 'buyer-' + (12 + i) })));   // right wall desks: buyers too
+// right wall desk: three buyers squeezed in, three monitors (top 2342, middle 2155, bottom 2210)
+[[10, 'buyer-14'], [12, 'buyer-12'], [14, 'buyer-13']].forEach(([y, code]) => deskSeats.push(addSeat(45, y, 'right', 'desk', { role: 'buyer', code })));
 // bar table: 3 stools; the top one is a real work station, the second monitor sits unused
 deskSeats.push(addSeat(46, 20, 'right', 'desk', { chair: '#3e3833', stool: true, role: 'buyer', code: 'bar-1' }));   // bar work station: a buyer (2679)
 addSeat(46, 22, 'right', 'desk', { chair: '#3e3833', stool: true });
@@ -771,13 +772,13 @@ const ROLES = {
 const KNOWN = {
   'product-1': [{ uid: 2372 }],   // product + tech (look comes from ROLES.product)
   'buyer-8': [
-    { uid: 2342, look: { hair: '#c8742a', skin: 0, shirt: '#3b6fd6', pants: '#2f3a5c', style: 'long' } },
     { uid: 2183, look: { hair: '#3a2a20', skin: 0, shirt: '#5b6a95', pants: '#3a3f55', style: 'short' } },
   ],
   'buyer-10': [{ uid: 2629, look: { hair: '#1a1a24', skin: 2, shirt: '#f472b6', pants: '#2f3a5c', style: 'long' } }],
   'buyer-11': [{ uid: 2380, look: { hair: '#6b4a2a', skin: 0, shirt: '#2f9a8a', pants: '#3a3f55', style: 'short', build: 'tall' } }],
   'buyer-12': [{ uid: 2155, look: { hair: '#6b4a2a', skin: 0, shirt: '#d9453b', pants: '#2f3a5c', style: 'short', hat: '#2a3a6c' } }],
-  'buyer-13': [{ uid: 2639, look: { hair: '#e3c26a', skin: 0, shirt: '#e9c46a', pants: '#3b5a96', style: 'bun' } }],   // "What's for lunch?" lives in the sheet's One-liners tab
+  'buyer-14': [{ uid: 2342, look: { hair: '#b0844a', skin: 0, shirt: '#3b6fd6', pants: '#2f3a5c', style: 'long' } }],   // brown-blonde; top of the right wall desk
+  'buyer-13': [{ uid: 2210, look: { hair: '#e3c26a', skin: 0, shirt: '#e9c46a', pants: '#3b5a96', style: 'bun' } }],   // "What's for lunch?" lives in the sheet's One-liners tab
   'buyer-4': [{ uid: 2350, dogOwner: true, look: { hair: '#8a5a32', skin: 0, shirt: '#2f9a8a', pants: '#2f3a5c', style: 'long' } }],   // the poodles' owner
   'am-3': [{ uid: 2104, look: { hair: '#c8742a', skin: 0, shirt: '#3b5a96', pants: '#3a3f55', style: 'short', build: 'tall' } }],
   'floater': [{ uid: 1426, look: { hair: '#6b4a2a', skin: 0, shirt: '#d97757', pants: '#2f3a5c', style: 'long' } }],   // no seat: see ROLES.floater

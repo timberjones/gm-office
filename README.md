@@ -27,7 +27,7 @@ Add these to the TV page, for example `timberjones.github.io/?time=12:30&weather
 - `?tz=America/Chicago` sets the clock's time zone (default `America/Toronto`)
 
 **People and scene**
-- `?people=20` sets today's headcount (by default Tue/Thu fills 80-95% of the 31 desks, Mon/Wed/Fri 10-30%, and weekends are empty). More people than desks (a townhall, say `?people=55`): the extras work from the lunch table, then the two spare bar stools, then the conference room (no meetings that day), and anyone left stands around the entrance asking "Where do I sit?". Up to 30 extra people.
+- `?people=20` sets today's headcount (by default Tue/Thu fills 80-95% of the 30 desks, Mon/Wed/Fri 10-30%, and weekends are empty). More people than desks (a townhall, say `?people=55`): the extras work from the lunch table, then the two spare bar stools, then the conference room (no meetings that day), and anyone left stands around the entrance asking "Where do I sit?". Up to 30 extra people.
 - `?weather=rain` forces `sun`, `cloud`, `rain` or `snow` (default: live Montreal weather from the feed)
 - `?dogs=1` brings the poodles in right away (they're only around 9:00-16:30)
 - `?delivery=1` sends a food courier in right away
