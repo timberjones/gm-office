@@ -1093,17 +1093,24 @@ function* roombaLife() {
 
 // ---------------------------------------------------------------- the toy poodles (one white, one brown) drop by now and then
 // W coat, S coat shade, e eye, n nose. They wander around the office for a while, leave, and come back later.
-const DOG_R_A = ['......WWW..', 'WW...WWWWW.', 'WW...WWeWWn', '.WWWWWWWWW.', '..WWWWWWW..', '..W.W..W.W.', '..S.S..S.S.'];
+// @shared-begin: gm-user.html loads the code between these markers (people + office layout), keep it page-agnostic
+const DOG_R_A = ['......WWW..', 'WW...WWWWW.', 'WW...WWeWWn', '.WWWWWccWW.', '..WWWWWWW..', '..W.W..W.W.', '..S.S..S.S.'];   // c = collar
 const DOG_R_B = DOG_R_A.map((r, j) => j === 5 ? '...W.W..WW.' : j === 6 ? '...S.S..SS.' : r);
-const DOG_D_A = ['..WWWW..', '.WWWWWW.', 'WWeWWeWW', 'WWWnnWWW', '.WWWWWW.', '.WWWWWW.', '.W.WW.W.', '.S.SS.S.'];
+const DOG_D_A = ['..WWWW..', '.WWWWWW.', 'WWeWWeWW', 'WWWnnWWW', '.WccccW.', '.WWWWWW.', '.W.WW.W.', '.S.SS.S.'];
 const DOG_D_B = DOG_D_A.map((r, j) => j === 6 ? '..W..W..' : j === 7 ? '..S..S..' : r);
 const backOf = rows => rows.map((r, j) => j === 2 || j === 3 ? 'WWWWWWWW' : r);
-function dogFrames(coat, coatShade) {
-  const pal = { W: coat, S: coatShade, e: '#1f1820', n: '#1a1214' }, F = {};
+function dogFrames(coat, coatShade, collar) {   // no collar: that strip is just coat
+  const pal = { W: coat, S: coatShade, c: collar || coat, e: '#1f1820', n: '#1a1214' }, F = {};
   F.rightA = bakeRows(DOG_R_A, pal); F.rightB = bakeRows(DOG_R_B, pal); F.leftA = bakeRows(DOG_R_A, pal, true); F.leftB = bakeRows(DOG_R_B, pal, true);
   F.downA = bakeRows(DOG_D_A, pal); F.downB = bakeRows(DOG_D_B, pal); F.upA = bakeRows(backOf(DOG_D_A), pal); F.upB = bakeRows(backOf(DOG_D_B), pal);
   return F;
 }
+// Easter egg: user id 101 (101 Dalmatians) on gm-user.html is a dog. Its look is { dog: true, coat, collar }.
+const DOG_ID = '101';
+const DOG_LOOK = { dog: true, coat: '#f6f4ee', collar: '#d9453b' };
+const dogFramesFor_ = l => dogFrames(l.coat, shade(l.coat, 0.82), l.collar);
+const framesFor_ = l => l && l.dog ? dogFramesFor_(l) : buildFrames(l);   // a person or a dog
+// @shared-end
 const dogs = [dogFrames('#f6f4ee', '#d4d0c6'), dogFrames('#8a5a32', '#6b4126')].map(frames =>
   ({ frames, present: false, px: 0, py: 0, tx: -1, ty: -1, dir: 'right', walkT: 0, pose: 'stand', bubble: null, headX: 0, headTop: 0, follow: false }));
 const dogTime = () => world.hour >= 9 && world.hour < 16.5 && workers.filter(w => w.present).length >= 2;
@@ -2228,7 +2235,7 @@ function render() {
   drawClockHands();
   for (const d of ROOM_DOORS) { const busy = d.kind === 'wc' && SPOTS.wc.spots.some(s => s.door === d.x && s.using && s.using.hidden); P(d.x * C8 + 6, 21 * C8 + 4, busy ? '#d9453b' : '#22b573'); }
   const list = STATIC.slice();
-  for (const w of workers) if (w.present) list.push({ key: w.py + C8 + 0.5, draw: () => drawPerson(w) });
+  for (const w of workers) if (w.present) list.push({ key: w.py + C8 + 0.5, draw: () => w.isDog ? drawDog(w) : drawPerson(w) });
   list.push({ key: roomba.py + 4, draw: drawRoomba });
   for (const d of dogs) if (d.present) list.push({ key: d.py + C8 + 0.45, draw: () => drawDog(d) });
   if (courier.present) list.push({ key: courier.py + C8 + 0.5, draw: () => drawPerson(courier) });
@@ -2323,18 +2330,18 @@ function workerOf_(uid) {   // [worker, variant] for a user id, or null
 }
 const seatAt_ = (x, y) => SEATS.find(s => s.x === x && s.y === y);
 function applyLook_(uid, look) {
-  if (!look) return;
+  if (!look || !!look.dog !== (String(uid) === DOG_ID)) return;   // only 101 is a dog, and 101 is always one
   looks[uid] = look;
   const hit = workerOf_(uid);
   if (!hit) return;
   const [w, v] = hit;
-  v.look = look; v.frames = buildFrames(look);
+  v.look = look; v.frames = framesFor_(look);
   if (w.v === v) { w.look = look; w.frames = v.frames; }
 }
 // Someone new (an id we don't know): a visitor with no desk. They walk in, go where they're driven, and leave
 // when their page closes. Slots are reused once a visitor has gone.
 function visitorFor_(uid) {
-  const look = looks[uid] || randomLook(), v = { uid: String(uid), dogOwner: false, look, frames: buildFrames(look) };
+  const look = looks[uid] || (String(uid) === DOG_ID ? DOG_LOOK : randomLook()), v = { uid: String(uid), dogOwner: false, look, frames: framesFor_(look) };
   let w = workers.find(o => o.visitor && !o.present && !o.ctl);
   if (!w) {
     if (workers.filter(o => o.visitor).length >= MAX_VISITORS) return null;
@@ -2343,7 +2350,7 @@ function visitorFor_(uid) {
     workers.push(w);
     cos.push(w.co = new Co(() => life(w), w));
   }
-  Object.assign(w, { variants: [v], v, look, frames: v.frames });
+  Object.assign(w, { variants: [v], v, look, frames: v.frames, isDog: !!look.dog, talk: look.dog ? 0 : ROLES.staff.talk });   // dogs only woof
   return w;
 }
 // Stop whatever they were doing and hand them to the relay.
@@ -2439,6 +2446,7 @@ function onRelay_(m) {
   if (m.t === 'look') { applyLook_(m.uid, m.look); return; }
   if (syncMode === 'follow') return;   // steps from gm-user.html: the leader moves them, and we get its snapshots
   let hit = workerOf_(m.uid);
+  if (m.t === 'bark') { if (hit && hit[0].isDog && hit[0].present) say_(hit[0], WOOF, 2, true); return; }   // the Woof button on 101's page
   if (m.t === 'bye') { if (hit) release_(hit[0]); return; }
   if (!hit) { const vw = visitorFor_(m.uid); if (!vw) return; hit = [vw, vw.v]; }
   const [w, v] = hit;
@@ -2447,7 +2455,7 @@ function onRelay_(m) {
   if (m.t === 'hb') return;
   c.dir = m.dir || c.dir;
   const [ax, ay] = c.q.length ? c.q[c.q.length - 1] : [w.tx, w.ty];
-  const seat = m.sit ? seatAt_(m.x, m.y) : null;
+  const seat = m.sit && !w.isDog ? seatAt_(m.x, m.y) : null;   // dogs don't sit in chairs
   if (ax === m.x && ay === m.y) {   // same cell: turned, stood up, or (hello) already sitting there
     if (!c.q.length) { if (!m.sit && w.seated) standUp(w); else if (seat && !w.seated && !seat.occ) sit(w, seat); w.dir = c.dir; }
     return;
@@ -2564,8 +2572,8 @@ function applySnap_(m) {
     }
     const w = workers[i];
     if (w.visitor && e[10] && w.v.uid !== String(e[10])) {
-      const uid = String(e[10]), look = looks[uid] || seededLook_(uid), v = { uid, dogOwner: false, look, frames: buildFrames(look) };
-      Object.assign(w, { variants: [v], v, look, frames: v.frames });
+      const uid = String(e[10]), look = looks[uid] || (uid === DOG_ID ? DOG_LOOK : seededLook_(uid)), v = { uid, dogOwner: false, look, frames: framesFor_(look) };
+      Object.assign(w, { variants: [v], v, look, frames: v.frames, isDog: !!look.dog, talk: look.dog ? 0 : ROLES.staff.talk });
     }
     const v = w.variants[e[9] | 0];
     if (v && v !== w.v) { w.v = v; w.look = v.look; w.frames = v.frames; }
@@ -2668,11 +2676,11 @@ function personAt_(e) {   // the front-most person under the mouse, or null
   const dpr = window.devicePixelRatio || 1, x = e.clientX * dpr / scale - OX, y = e.clientY * dpr / scale - OY;
   let best = null;
   for (const w of [...workers, courier, waterGuy]) {
-    if (!w.present || w.hidden || !w.frames) continue;
+    if (!w.present || w.hidden || !w.frames || w.isDog) continue;
     const h = w.seated ? 13 : 17;   // sprite box from the top of the head down
     if (x >= w.headX - 6 && x <= w.headX + 6 && y >= w.headTop - 1 && y <= w.headTop + h && (!best || w.headTop > best.headTop)) best = w;
   }
-  for (const d of dogs) {   // the poodles: a smaller box around the whole dog
+  for (const d of dogs.concat(workers.filter(w => w.isDog))) {   // the poodles (and a 101 dog): a smaller box around the whole dog
     if (!d.present) continue;
     if (x >= d.headX - 6 && x <= d.headX + 5 && y >= d.headTop - 3 && y <= d.headTop + 6 && (!best || d.headTop > best.headTop)) best = d;
   }
@@ -2705,7 +2713,7 @@ cv.addEventListener('click', e => {
 const ANGRY_LINE = 'STOP CLICKING ME', CLICK_BURST = 5, CLICK_WINDOW = 10, ANGRY_SECS = 5;
 const WOOF = 'Woof!';
 function poke_(w) {
-  if (dogs.includes(w)) { say_(w, WOOF, 2, true); return; }   // click a poodle and it barks
+  if (dogs.includes(w) || w.isDog) { say_(w, WOOF, 2, true); return; }   // click a dog and it barks
   if (w.angryUntil > TIME) return;   // still cross: clicks do nothing
   w.pokes = (w.pokes || []).filter(t => TIME - t < CLICK_WINDOW);
   if (w.pokes.length >= CLICK_BURST) {

@@ -140,7 +140,7 @@
     <button class="right" data-dir="right" aria-label="Right">▶</button>
     <button class="down" data-dir="down" aria-label="Down">▼</button>
   </div>
-  <div class="hint">Tap or hold the arrows · keyboard: arrows / WASD, Space to sit</div>
+  <div class="hint" id="hint">Tap or hold the arrows · keyboard: arrows / WASD, Space to sit</div>
 </main>
 
 <script type="module">
@@ -150,7 +150,9 @@
 // minute) and your character goes back to its routine, or walks out if it isn't in today.
 // The people sprites and the office layout come straight from gm-office.html (the code between its @shared
 // markers), so this page always draws and walks exactly like the office does.
-const RELAY_URL = 'wss://gm-office-relay.tj-c25.workers.dev/ws';
+const RELAY_PARAM = new URLSearchParams(location.search).get('relay');   // ?relay= for testing against a local relay (kept in the address)
+const RELAY_URL = RELAY_PARAM || 'wss://gm-office-relay.tj-c25.workers.dev/ws';
+const keepQS = () => RELAY_PARAM ? 'relay=' + encodeURIComponent(RELAY_PARAM) : '';
 const MANUAL_WALK = 48;   // px per second, same as a driven character on the TV
 const DIRV = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
 const $ = id => document.getElementById(id);
@@ -160,7 +162,7 @@ const store = { get: k => { try { return localStorage.getItem(k); } catch (e) { 
 async function loadShared() {
   const html = await (await fetch('gm-office.html', { cache: 'no-cache' })).text();
   const parts = [...html.matchAll(/\/\/ @shared-begin[^\n]*\n([\s\S]*?)\/\/ @shared-end/g)].map(m => m[1]);
-  if (parts.length < 3) throw new Error('shared code not found in gm-office.html');
+  if (parts.length < 4) throw new Error('shared code not found in gm-office.html');
   const el = document.createElement('script');
   el.textContent = parts.join('\n');
   document.head.appendChild(el);   // classic script: its consts (SEATS, bfs, buildFrames, KNOWN ...) become globals
@@ -179,6 +181,7 @@ function knownSeat(uid) {   // [seat, default look] for an id the office knows, 
 }
 const SEX_STYLES = { m: ['short', 'spiky'], f: ['long', 'bun'] };
 function startLook(uid) {
+  if (uid === DOG_ID) return Object.assign({}, DOG_LOOK);   // easter egg: 101 Dalmatians
   const k = knownSeat(uid), base = k && k[1] ? k[1] : randomLook();
   const l = Object.assign({ hat: null, beard: false, goatee: false, build: null }, base);
   if (!l.sex) l.sex = SEX_STYLES.f.includes(l.style) ? 'f' : 'm';
@@ -192,13 +195,15 @@ function startAs(uid) {
   if (!uid) { $('pickErr').textContent = 'Type a user id (numbers only).'; return; }
   if (uid === NEW_ID) uid = newId();
   store.set('gmOfficeUid', uid);
-  history.replaceState(null, '', '?id=' + uid);
+  history.replaceState(null, '', '?id=' + uid + (keepQS() ? '&' + keepQS() : ''));
   const k = knownSeat(uid), home = k ? k[0] : null, look = startLook(uid);
-  me = { uid, home, look, frames: buildFrames(look), q: [], seat: null, dir: 'right', walkT: 0, lookTouched: false, lookFromRelay: false };
+  me = { uid, home, look, frames: framesFor_(look), dog: uid === DOG_ID, q: [], seat: null, dir: 'right', walkT: 0, lookTouched: false, lookFromRelay: false };
   if (home) Object.assign(me, { tx: home.x, ty: home.y, seat: home, dir: home.face });   // known: you're at your desk (the TV walks you in if you weren't)
   else Object.assign(me, { tx: 0, ty: 25 });                                              // new: you come in through the door
   me.px = me.tx * C8; me.py = me.ty * C8;
-  $('who').textContent = (k ? 'User ' : 'New person ') + uid;
+  $('who').textContent = me.dog ? "Woof! You're the office dog" : (k ? 'User ' : 'New person ') + uid;
+  $('sitBtn').setAttribute('aria-label', me.dog ? 'Bark' : 'Sit or stand');
+  $('hint').textContent = me.dog ? 'Tap or hold the arrows · keyboard: arrows / WASD, Space to woof' : 'Tap or hold the arrows · keyboard: arrows / WASD, Space to sit';
   $('pick').classList.add('hidden'); $('play').classList.remove('hidden');
   buildLooksUI(); updateWhere();
   relay.stop = false; relayConnect();
@@ -206,7 +211,7 @@ function startAs(uid) {
 function showPick() {
   relayHangUp();
   me = null; held = [];
-  history.replaceState(null, '', location.pathname);
+  history.replaceState(null, '', location.pathname + (keepQS() ? '?' + keepQS() : ''));
   $('play').classList.add('hidden'); $('pick').classList.remove('hidden');
   const last = store.get('gmOfficeUid');
   $('again').classList.toggle('hidden', !last);
@@ -231,6 +236,7 @@ function queueStep(dir) {
   }
 }
 function sitOrStand() {
+  if (me && me.dog) { send({ t: 'bark' }); flashWhere('Woof!'); return; }   // dogs don't sit in chairs: they bark
   if (!me || me.q.length) return;
   if (me.seat) { me.seat = null; send({ t: 'step', x: me.tx, y: me.ty, dir: me.dir, sit: false }); updateWhere(); return; }
   for (const d of [me.dir, ...Object.keys(DIRV).filter(d => d !== me.dir)]) {   // the seat you're facing first
@@ -279,6 +285,15 @@ function renderAvatar(t) {
   if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
   const g2 = c.getContext('2d'); g2.clearRect(0, 0, W, H); g2.imageSmoothingEnabled = false;
   const F = me.frames, walking = me.q.length > 0;
+  if (me.dog) {   // 11 x 7 art px: drawn bigger than a person so it fills the stage
+    const f = F[me.dir + (walking && Math.floor(me.walkT * 10) % 2 ? 'B' : 'A')];
+    const a = f.art || 1, fw = f.width / a, fh = f.height / a, S = Math.max(3, Math.floor(Math.min(W / 14, H / 16)));
+    const x = Math.round((W - fw * S) / 2), y = Math.round(H * 0.8 - fh * S) - (!walking && ((t / 700) | 0) % 2 ? S / 2 : 0);   // idle: a little pant
+    g2.fillStyle = 'rgba(40,20,8,0.25)';
+    g2.beginPath(); g2.ellipse(W / 2, H * 0.8, fw * S * 0.45, 1.6 * S, 0, 0, Math.PI * 2); g2.fill();
+    g2.drawImage(f, x, y, fw * S, fh * S);
+    return;
+  }
   let f;
   if (me.seat) {
     const s = me.seat, b = s.kind === 'desk' && ((t / 400) | 0) % 2 ? 'B' : 'A';   // typing at a desk
@@ -318,9 +333,25 @@ const PALETTE = {
 const withCurrent = (list, cur) => cur && !list.includes(cur) ? [cur, ...list] : list;
 const GROUPS = [['body', 'Body'], ['hair', 'Hair'], ['face', 'Face'], ['clothes', 'Clothes']];
 let tab = 'body';   // which group a phone shows
+const DOG_COATS = ['#f6f4ee', '#e3c26a', '#c8742a', '#8a5a32', '#3a2a20', '#1a1a24', '#9aa4b0'];
+const DOG_COLLARS = ['#d9453b', '#3b6fd6', '#22b573', '#ec8f2b', '#f472b6'];
 function buildLooksUI() {
   const L = me.look, root = $('looks');
   root.innerHTML = '';
+  if (me.dog) {   // a dog only picks a coat and a collar
+    const row = (title, cols, key, none) => {
+      const l = document.createElement('div'); l.className = 'lbl'; l.textContent = title; root.appendChild(l);
+      const o = document.createElement('div'); o.className = 'opts'; root.appendChild(o);
+      if (none) { const b = document.createElement('button'); b.className = 'sw none' + (L[key] == null ? ' sel' : ''); b.setAttribute('aria-label', 'None'); b.onclick = () => { me.look[key] = null; lookChanged(); }; o.appendChild(b); }
+      for (const col of withCurrent(cols, L[key])) { const b = document.createElement('button'); b.className = 'sw' + (L[key] === col ? ' sel' : ''); b.style.background = col; b.setAttribute('aria-label', col); b.onclick = () => { me.look[key] = col; lookChanged(); }; o.appendChild(b); }
+    };
+    root.style.display = 'grid';   // phones: no tabs for two rows
+    row('Coat', DOG_COATS, 'coat');
+    row('Collar', DOG_COLLARS, 'collar', true);
+    const sv = document.createElement('div'); sv.className = 'saved'; sv.id = 'saved'; root.appendChild(sv);
+    return;
+  }
+  root.style.display = '';
   const bar = document.createElement('div'); bar.className = 'tabs'; root.appendChild(bar);
   const groups = {};
   for (const [k, label] of GROUPS) {
@@ -365,7 +396,7 @@ function buildLooksUI() {
 let lookT = 0;
 function lookChanged() {
   me.lookTouched = true;
-  me.frames = buildFrames(me.look);
+  me.frames = framesFor_(me.look);
   buildLooksUI();
   $('saved').textContent = 'Saving…';
   clearTimeout(lookT);
@@ -401,8 +432,10 @@ function relayConnect() {
     let m; try { m = JSON.parse(e.data); } catch (er) { return; }
     if (m.t !== 'state' || !me) return;
     const saved = m.looks && m.looks[me.uid];
-    if (saved && !me.lookTouched) { me.look = Object.assign({ hat: null, beard: false, goatee: false, build: null, sex: 'm' }, saved); me.frames = buildFrames(me.look); buildLooksUI(); }
-    else if (!saved && !me.home && !me.lookTouched) sendLook();   // someone new: their starting look is what the TV shows
+    if (saved && !me.lookTouched && !!saved.dog === me.dog) {
+      me.look = me.dog ? Object.assign({}, saved) : Object.assign({ hat: null, beard: false, goatee: false, build: null, sex: 'm' }, saved);
+      me.frames = framesFor_(me.look); buildLooksUI();
+    } else if (!saved && !me.home && !me.lookTouched) sendLook();   // someone new: their starting look is what the TV shows
   };
   ws.onclose = () => {
     relay.ok = false; relay.ws = null; setStatus();
@@ -454,7 +487,7 @@ function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
   if (!me) return;
   walk(dt);
-  $('sitBtn').textContent = me.seat ? 'Stand' : 'Sit';
+  $('sitBtn').textContent = me.dog ? 'Woof' : me.seat ? 'Stand' : 'Sit';
   renderAvatar(now);
 }
 try {

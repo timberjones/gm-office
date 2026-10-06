@@ -28,8 +28,12 @@ function eastern() {   // { day, h }: the same day key as zoneDay() in gm-office
 }
 const PM_FROM = 14;   // posts from 2 pm on are afternoon counts
 const HEX = /^#[0-9a-f]{6}$/i, STYLES = ['short', 'spiky', 'long', 'bun'];
-function cleanLook(l) {   // only the fields gm-office.html draws, checked; null if it isn't a look
-  if (!l || typeof l !== 'object' || !HEX.test(l.hair) || !HEX.test(l.shirt) || !HEX.test(l.pants)) return null;
+const DOG_ID = '101';   // easter egg: this id is a dog (gm-office.html DOG_ID)
+function cleanLook(l, uid) {   // only the fields gm-office.html draws, checked; null if it isn't a look
+  if (!l || typeof l !== 'object') return null;
+  if ((uid === DOG_ID) !== !!l.dog) return null;   // 101 is always a dog, nobody else is
+  if (l.dog) return HEX.test(l.coat) ? { dog: true, coat: l.coat.toLowerCase(), collar: HEX.test(l.collar) ? l.collar.toLowerCase() : null } : null;
+  if (!HEX.test(l.hair) || !HEX.test(l.shirt) || !HEX.test(l.pants)) return null;
   return {
     hair: l.hair.toLowerCase(), shirt: l.shirt.toLowerCase(), pants: l.pants.toLowerCase(),
     skin: Math.max(0, Math.min(4, l.skin | 0)), style: STYLES.includes(l.style) ? l.style : 'short',
@@ -164,14 +168,14 @@ export class Office extends DurableObject {
     if (++a.n > MAX_PER_SEC) { ws.serializeAttachment(a); return; }
     let m;
     try { m = JSON.parse(raw); } catch (e) { return; }
-    if (!m || !['hello', 'step', 'hb', 'look'].includes(m.t)) return;
+    if (!m || !['hello', 'step', 'hb', 'look', 'bark'].includes(m.t)) return;   // bark: the dog's Woof button
     const out = { t: m.t, uid: a.uid };
     if (m.t === 'look') {
-      const look = cleanLook(m.look);
+      const look = cleanLook(m.look, a.uid);
       if (!look) return;
       await this.ctx.storage.put('look:' + a.uid, look);
       out.look = look;
-    } else if (m.t !== 'hb') {
+    } else if (m.t !== 'hb' && m.t !== 'bark') {
       const x = m.x | 0, y = m.y | 0;
       if (x < 0 || y < 0 || x >= GX || y >= GY) return;
       Object.assign(out, { x, y, dir: DIRS.includes(m.dir) ? m.dir : 'down', sit: !!m.sit });
