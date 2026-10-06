@@ -91,7 +91,9 @@ const WALK = 30;                          // px per second
 const OUT = params.get('style') === 'classic' ? '#1a1c3a' : '#33251f';   // outline: warm dark brown (cozy style); classic = navy
 
 // seeded randomness
-let seed = params.has('seed') ? (parseInt(params.get('seed')) | 0) : (Math.random() * 1e9) | 0;
+// The office is built from a fixed seed, so every screen gets the same chair colours, faces and arrival / leaving
+// times; after boot it's reseeded (unless ?seed=) so the day itself isn't a rerun.
+let seed = params.has('seed') ? (parseInt(params.get('seed')) | 0) : 20261006;
 function rand() { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }
 const rnd = (a, b) => a + rand() * (b - a), irnd = (a, b) => Math.floor(rnd(a, b + 1)), pick = a => a[Math.floor(rand() * a.length)], chance = p => rand() < p;
 function weighted(list) { let s = 0; for (const [, w] of list) s += w; let r = rand() * s; for (const [k, w] of list) { r -= w; if (r <= 0) return k; } return list[0][0]; }
@@ -2013,7 +2015,7 @@ function sayRandom() {
 function updateSpeech(dt) {
   for (const s of speeches) s.t += dt;
   speeches = speeches.filter(s => s.t < s.life && s.w.present && !s.w.hidden);
-  if (CHAT && (chatT -= dt) <= 0) chatT = sayRandom() ? rnd(45, 90) : rnd(5, 10);   // a new line every 45 s - 1.5 min, even if others are still talking
+  if (CHAT && syncMode !== 'follow' && (chatT -= dt) <= 0) chatT = sayRandom() ? rnd(45, 90) : rnd(5, 10);   // a new line every 45 s - 1.5 min, even if others are still talking
 }
 function wrapText(c, text, maxW) {
   const lines = []; let cur = '';
@@ -2237,8 +2239,11 @@ function updateAmbient(dt) {
 function step(dt) {
   DT = dt; TIME += dt;
   world.hour = hourNow();
-  for (const c of cos) if (!(c.w && c.w.ctl)) c.tick();
-  for (const w of workers) if (w.ctl) drive_(w, dt);
+  if (syncMode === 'follow') followStep_(dt);   // another screen runs the office; we show what it sends
+  else {
+    for (const c of cos) if (!(c.w && c.w.ctl)) c.tick();
+    for (const w of workers) if (w.ctl) drive_(w, dt);
+  }
   for (const w of workers) if (w.bubble && (w.bubble.t -= dt) <= 0) w.bubble = null;
   for (const d of dogs) {
     if (d.bubble && (d.bubble.t -= dt) <= 0) d.bubble = null;
@@ -2351,26 +2356,34 @@ const relay = { ws: null, ok: false, wait: 1000 };
 function relayConnect_() {
   if (!RELAY_URL || typeof WebSocket === 'undefined' || relay.ws) return;
   let ws;
-  try { ws = new WebSocket(RELAY_URL); } catch (e) { return; }
+  try { ws = new WebSocket(RELAY_URL + (RELAY_URL.includes('?') ? '&' : '?') + 'sync=1'); } catch (e) { return; }   // sync=1: we can lead or follow
   relay.ws = ws;
   ws.onopen = () => { relay.ok = true; relay.wait = 1000; };
   ws.onmessage = e => { if (e.data === 'pong') return; let m; try { m = JSON.parse(e.data); } catch (er) { return; } onRelay_(m); };
   ws.onclose = () => {
     relay.ok = false; relay.ws = null;
+    if (syncMode !== 'solo') { if (syncMode === 'follow') takeCharge_(); syncMode = 'solo'; }   // on our own until it's back
     setTimeout(relayConnect_, relay.wait); relay.wait = Math.min(relay.wait * 2, 60000);   // 1, 2, 4 ... 60 s
   };
 }
 function onRelay_(m) {
+  if (m.t === 'role') { setRole_(m.lead, m.peers); return; }
+  if (m.t === 'peers') { syncPeers = m.n | 0; if (syncMode === 'lead' && syncPeers) sendSnap_(); return; }
+  if (m.t === 'snap') { if (syncMode === 'follow') applySnap_(m); return; }
+  if (m.t === 'poke') { if (syncMode !== 'follow') { const w = m.i === -1 ? courier : workers[m.i]; if (w && w.present && !w.hidden) poke_(w); } return; }
   if (m.t === 'state') {   // (re)connected: everyone's looks, and exactly these people are driving right now
     for (const [uid, look] of Object.entries(m.looks || {})) applyLook_(uid, look);
+    if (m.count) { liveCount = m.count; rosterNow_(); }
+    if (m.snap && syncMode === 'follow') applySnap_(m.snap);
+    if (syncMode === 'follow') return;   // the leader handles who's driving
     const on = new Set((m.online || []).map(o => String(o.uid)));
     for (const w of workers) if (w.ctl && !w.variants.some(v => on.has(String(v.uid)))) release_(w);
     for (const o of m.online || []) onRelay_(Object.assign({ t: 'hello' }, o));
-    if (m.count) { liveCount = m.count; pickRoster(); }
     return;
   }
-  if (m.t === 'count') { liveCount = m; pickRoster(); return; }
+  if (m.t === 'count') { liveCount = m; rosterNow_(); return; }
   if (m.t === 'look') { applyLook_(m.uid, m.look); return; }
+  if (syncMode === 'follow') return;   // steps from gm-user.html: the leader moves them, and we get its snapshots
   let hit = workerOf_(m.uid);
   if (m.t === 'bye') { if (hit) release_(hit[0]); return; }
   if (!hit) { const vw = visitorFor_(m.uid); if (!vw) return; hit = [vw, vw.v]; }
@@ -2408,12 +2421,179 @@ setInterval(() => {
   for (const w of workers) if (w.ctl && now - w.ctl.seen > 75000) release_(w);
 }, 20000);
 
+// ---------------------------------------------------------------- one office on every screen
+// The relay picks one screen (whichever connected first, normally the office TV) to run the office: its people,
+// speech, dogs, courier and roomba. It sends a snapshot of who's where 4 times a second, but only while someone
+// else is watching, and every other screen draws that, gliding between snapshots. Clicking someone on another
+// screen asks the leader, so everyone sees the same hello. If the leader goes quiet (closed, or a hidden tab),
+// another screen takes over from the last snapshot. With no relay, each screen runs its own office as before.
+let syncMode = 'solo';   // 'solo' | 'lead' | 'follow'
+let syncPeers = 0, lastSnapAt = 0, lastClaim = 0;
+const SNAP_MS = 250;
+const SYNC_V = 'v1:' + SEATS.length + ':' + workers.length;   // the same page version on both ends, or no syncing
+const BASE_WORKERS = workers.length;                           // visitors come after these
+const POSES = ['stand', 'walk', 'type', 'idle', 'eat', 'call'], FACES = ['up', 'down', 'left', 'right'];
+function relaySend_(o) { if (relay.ok) try { relay.ws.send(JSON.stringify(o)); } catch (e) {} }
+function setRole_(lead, peers) {
+  syncPeers = peers | 0;
+  if (lead) {
+    if (syncMode === 'follow') takeCharge_();
+    syncMode = 'lead';
+    if (syncPeers) sendSnap_();
+  } else {
+    syncMode = 'follow'; lastSnapAt = Date.now();   // give the leader a moment to send its first snapshot
+    for (const w of workers) w.ctl = null;
+  }
+}
+const ent_ = o => [o.present ? 1 : 0, o.hidden ? 1 : 0, Math.round(o.px * 2) / 2, Math.round(o.py * 2) / 2, o.dir, o.pose,
+  o.seated && o.sitAt ? SEATS.indexOf(o.sitAt) : -1, o.headset ? 1 : 0, o.bag ? 1 : 0];
+function sendSnap_() {
+  relaySend_({
+    t: 'snap', v: SYNC_V, h: hallX(),
+    w: workers.map(w => ent_(w).concat([Math.max(0, w.variants.indexOf(w.v)), w.visitor ? w.v.uid : 0])),
+    c: courier.present && courier.look ? ent_(courier).concat([courier.look]) : null,
+    d: dogs.map(d => [d.present ? 1 : 0, Math.round(d.px * 2) / 2, Math.round(d.py * 2) / 2, d.dir, d.pose]),
+    r: [Math.round(roomba.px * 2) / 2, Math.round(roomba.py * 2) / 2, roomba.dir, roomba.tx, roomba.ty],
+    s: speeches.map(x => [x.w === courier ? -1 : workers.indexOf(x.w), x.text, Math.round(x.t * 10) / 10, x.life, x.greet ? 1 : 0]),
+  });
+}
+setInterval(() => {
+  if (syncMode === 'lead' && syncPeers && !document.hidden) sendSnap_();
+  // the leader went quiet: ask to take over (the relay agrees only if it hasn't heard from the leader either)
+  if (syncMode === 'follow' && !document.hidden && Date.now() - lastSnapAt > 3000 && Date.now() - lastClaim > 2000) { lastClaim = Date.now(); relaySend_({ t: 'claim' }); }
+}, SNAP_MS);
+const num_ = (v, lo, hi) => typeof v === 'number' && isFinite(v) ? Math.max(lo, Math.min(hi, v)) : lo;
+let snapHall = 0;
+function glideTo_(o, x, y) {   // follow a snapshot position smoothly; jump if it's far (or they just appeared)
+  if (x < 0 && snapHall < 0) x = x * hallX() / snapHall;   // hallway positions depend on each screen's width
+  const far = Math.abs(x - o.px) > 3 * C8 || Math.abs(y - o.py) > 3 * C8;
+  if (!o.present || far) { o.px = x; o.py = y; o.glide = null; return; }
+  o.glide = { x0: o.px, y0: o.py, x1: x, y1: y, t: 0 };
+}
+function applyEnt_(o, e) {
+  const seat = e[6] >= 0 && SEATS[e[6]] ? SEATS[e[6]] : null;
+  if (o.sitAt && o.sitAt !== seat && o.sitAt.occ === o) o.sitAt.occ = null;
+  glideTo_(o, num_(e[2], -4000, GX * C8), num_(e[3], -64, GY * C8));
+  o.present = !!e[0]; o.hidden = !!e[1];
+  o.dir = FACES.includes(e[4]) ? e[4] : 'down'; o.pose = POSES.includes(e[5]) ? e[5] : 'stand';
+  o.seated = !!seat; o.sitAt = seat; if (seat) seat.occ = o;
+  o.headset = !!e[7]; o.bag = !!e[8];
+  o.tx = Math.round(o.px / C8); o.ty = Math.round(o.py / C8);
+}
+let okTexts = null, okFeed = null;
+function okText_(t) {   // only lines this page could have said itself, so a forged snapshot can't put words on the TV
+  if (!okTexts || okFeed !== feed) {
+    okFeed = feed;
+    const all = [].concat(CLICK_LINES, GREETINGS.morning, GREETINGS.bye, COURIER_LINES);
+    for (const k in ROLES) if (ROLES[k].lines) all.push(...ROLES[k].lines);
+    if (feed) for (const e of feed.feed) if (Array.isArray(e.speech)) all.push(...e.speech);
+    okTexts = new Set(all.concat(all.map(x => String(x).toUpperCase())));
+  }
+  return okTexts.has(t);
+}
+function applySnap_(m) {
+  if (!m || m.v !== SYNC_V || !Array.isArray(m.w)) return;   // a different version of the page: keep our own
+  lastSnapAt = Date.now();
+  snapHall = num_(m.h, -4000, 0);
+  m.w.forEach((e, i) => {
+    if (!Array.isArray(e)) return;
+    if (i >= workers.length) {   // a visitor the leader has and we don't yet
+      if (!e[10]) return;
+      while (workers.length <= i && workers.length < BASE_WORKERS + MAX_VISITORS) {
+        const w = makeWorker_({ x: 0, y: 25, face: 'right', kind: 'door' }, workers.length, 'staff');
+        w.visitor = true; w.today = false; workers.push(w); cos.push(w.co = new Co(() => life(w), w));
+      }
+      if (i >= workers.length) return;
+    }
+    const w = workers[i];
+    if (w.visitor && e[10] && w.v.uid !== String(e[10])) {
+      const uid = String(e[10]), look = looks[uid] || seededLook_(uid), v = { uid, dogOwner: false, look, frames: buildFrames(look) };
+      Object.assign(w, { variants: [v], v, look, frames: v.frames });
+    }
+    const v = w.variants[e[9] | 0];
+    if (v && v !== w.v) { w.v = v; w.look = v.look; w.frames = v.frames; }
+    applyEnt_(w, e);
+  });
+  if (Array.isArray(m.c) && m.c[9] && typeof m.c[9] === 'object') {
+    const lk = m.c[9], key = JSON.stringify(lk);
+    if (key !== courier.lookKey) { try { courier.frames = buildFrames(lk); courier.look = lk; courier.lookKey = key; } catch (er) { courier.frames = null; } }
+    if (courier.frames) applyEnt_(courier, m.c);
+  } else courier.present = false;
+  if (Array.isArray(m.d)) m.d.forEach((e, i) => {
+    const d = dogs[i];
+    if (!d || !Array.isArray(e)) return;
+    glideTo_(d, num_(e[1], -4000, GX * C8), num_(e[2], -64, GY * C8));
+    d.present = !!e[0]; d.dir = FACES.includes(e[3]) ? e[3] : 'right'; d.pose = e[4] === 'walk' ? 'walk' : 'stand';
+  });
+  if (Array.isArray(m.r)) {
+    roomba.present = true; glideTo_(roomba, num_(m.r[0], 0, GX * C8), num_(m.r[1], 0, GY * C8));
+    roomba.dir = FACES.includes(m.r[2]) ? m.r[2] : 'down'; roomba.tx = m.r[3] | 0; roomba.ty = m.r[4] | 0;
+  }
+  if (Array.isArray(m.s)) speeches = m.s.filter(x => Array.isArray(x) && typeof x[1] === 'string' && okText_(x[1]))
+    .map(x => ({ w: x[0] === -1 ? courier : workers[x[0]], text: x[1], t: num_(x[2], 0, 600), life: num_(x[3], 0, 600), greet: !!x[4] }))
+    .filter(x => x.w).slice(-MAX_BUBBLES);
+}
+function followStep_(dt) {   // glide everyone toward the latest snapshot
+  const glide = o => {
+    if (o.glide) {
+      const gl = o.glide; gl.t = Math.min(1, gl.t + dt * 1000 / SNAP_MS);
+      o.px = gl.x0 + (gl.x1 - gl.x0) * gl.t; o.py = gl.y0 + (gl.y1 - gl.y0) * gl.t;
+      if (gl.t >= 1) o.glide = null;
+    }
+    if (o.pose === 'walk') o.walkT += dt;
+  };
+  workers.forEach(glide); dogs.forEach(glide); glide(courier); glide(roomba);
+}
+function seededLook_(uid) {   // a visitor with no look of their own: the same random look on every screen
+  const keep = seed; seed = 0; for (const ch of String(uid)) seed = (Math.imul(seed, 31) + ch.charCodeAt(0)) | 0;
+  const lk = randomLook(); seed = keep; return lk;
+}
+// We were showing another screen's office and now run it ourselves: carry on from where everyone is.
+function takeCharge_() {
+  for (const k in SPOTS) for (const sp of SPOTS[k].spots) { sp.busy = null; sp.using = null; }
+  LUNCH_SEATS.forEach(x => { x.claimed = false; });
+  SEATS.forEach(x => { x.occ = null; });
+  meeting = null;
+  for (const w of workers) {
+    Object.assign(w, { summon: null, meetSeat: null, held: false, fetch: null, chatWith: null, ctl: null, glide: null, hidden: false, bag: false });
+    if (w.present && w.px < 0) { w.present = false; w.seated = false; w.sitAt = null; }   // out in the hallway: they've gone
+    if (w.seated && w.sitAt) w.sitAt.occ = w;
+    else if (w.present) { w.seated = false; w.sitAt = null; w.tx = clamp(Math.round(w.px / C8), 0, GX - 1); w.ty = clamp(Math.round(w.py / C8), 0, GY - 1); w.px = w.tx * C8; w.py = w.ty * C8; }
+    w.co.restart(() => (function* () {
+      if (w.present) {
+        if (!wantPresent(w)) yield* leave(w);
+        else if (!atDesk(w)) { standUp(w); yield* goHome(w); }
+      }
+      yield* life(w);
+    })());
+  }
+  dogs.forEach(d => { d.present = false; d.glide = null; });
+  courier.present = false; courier.glide = null;
+  Object.assign(roomba, { px: DOCK.x * C8, py: DOCK.y * C8, tx: DOCK.x, ty: DOCK.y, glide: null });
+  extraCos.dog0.restart(() => dogLife(dogs[0], dogs[1])); extraCos.dog1.restart(() => dogLife(dogs[1], dogs[0]));
+  extraCos.courier.restart(courierLife); extraCos.roomba.restart(roombaLife);
+}
+// Today's real headcount arrived: right after the page opens, just swap who's at their desk (nobody walks in or
+// out because the page started with the weekday guess); later on, people come and go on foot as usual.
+function rosterNow_() {
+  pickRoster();
+  if (TIME > 15 || syncMode === 'follow') return;
+  for (const w of workers) {
+    if (w.ctl || w.visitor) continue;
+    const want = wantPresent(w);
+    if (w.present && !want) { standUp(w); Object.assign(w, { present: false, tx: -1, ty: -1 }); w.co.restart(() => life(w)); }
+    else if (!w.present && want) { w.present = true; sit(w, w.home); w.greeted = rosterKey; w.co.restart(() => life(w)); }
+  }
+}
+
 // ---------------------------------------------------------------- boot
 buildSprites();
 buildLayers();
 buildDrawables();
 for (const w of workers) if (wantPresent(w)) { w.present = true; sit(w, w.home); w.greeted = rosterKey; }   // already at work when the page opens (and already said good morning)
-const cos = [...workers.map(w => (w.co = new Co(() => life(w), w))), new Co(roombaLife), new Co(() => dogLife(dogs[0], dogs[1])), new Co(() => dogLife(dogs[1], dogs[0])), new Co(courierLife)];
+const extraCos = { roomba: new Co(roombaLife), dog0: new Co(() => dogLife(dogs[0], dogs[1])), dog1: new Co(() => dogLife(dogs[1], dogs[0])), courier: new Co(courierLife) };
+const cos = [...workers.map(w => (w.co = new Co(() => life(w), w))), ...Object.values(extraCos)];
+if (!params.has('seed')) seed = (Math.random() * 1e9) | 0;
 if (params.get('dogs') === '1') dogs.forEach(d => { d.follow = true; });   // preview: both poodles come in right away
 relayConnect_();
 resize();
@@ -2450,12 +2630,16 @@ function toggleFullscreen_() {
 cv.addEventListener('click', e => {
   const w = personAt_(e);
   if (!w) { toggleFullscreen_(); return; }
+  if (syncMode === 'follow') { relaySend_({ t: 'poke', i: w === courier ? -1 : workers.indexOf(w) }); return; }   // the leader answers for everyone
+  poke_(w);
+});
+function poke_(w) {
   const any = () => CLICK_LINES[Math.floor(Math.random() * CLICK_LINES.length)];   // Math.random: leave the seeded sim untouched
   let text = any();
   for (let k = 0; k < 4 && speakingNow_(w) && speakingNow_(w).text === text; k++) text = any();   // no repeat on a double click
   if (w.role === 'am') text = text.toUpperCase();   // account managers are loud
   say_(w, text, 3 + text.length * 0.06, true);
-});
+}
 addEventListener('keydown', e => {
   const k = (e.key || '').toLowerCase();
   if (k === 'enter' || e.keyCode === 13) { toggleFullscreen_(); return; }

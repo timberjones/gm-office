@@ -50,7 +50,7 @@ $manufFile = Join-Path $here 'manuf.txt'
 $configFile = Join-Path $here 'headcount-config.json'   # { relay, token, ssidPattern }; never committed
 $config = if (Test-Path $configFile) { Get-Content $configFile -Raw | ConvertFrom-Json } else { $null }
 $ssidPattern = if ($config -and $config.ssidPattern) { $config.ssidPattern } else { 'gomaterials' }
-$laptopVendors = 'Intel|Liteon|AzureWave|Realtek|MediaTek|Qualcomm|Atheros|Rivet Networks|Killer|Dell|Lenovo|Hewlett|HP Inc|Microsoft|Hon Hai|Foxconn|Cloud Network Technology|Compal|Quanta|Wistron|Pegatron|ASUSTek|Acer|Framework|Universal Global Scientific'
+$laptopVendors = 'Intel|Liteon|AzureWave|Realtek|MediaTek|Qualcomm|Atheros|Rivet Networks|Killer|Dell|Lenovo|Hewlett[- ]Packard(?! Enterprise)|HP Inc|Fugui|Microsoft|Hon Hai|Foxconn|Cloud Network Technology|Compal|Quanta|Wistron|Pegatron|ASUSTek|Acer|Framework|Universal Global Scientific'
 $infraNames = 'printer|print|brother|epson|canon|xerox|ricoh|kyocera|tv|roku|chromecast|sonos|camera|nvr|nas|synology|switch|^ap-|unifi|meraki|router|gateway'
 
 function ConvertTo-Num([string]$ip) {

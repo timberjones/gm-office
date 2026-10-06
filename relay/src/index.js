@@ -10,12 +10,17 @@
 //                  Everyone gets { t: 'count', day, n, pm }; pages use it as today's headcount (and wind the afternoon
 //                  down from pm to 6 pm), and fall back to the weekday guess when there's none for today.
 // Hibernation API: idle sockets cost nothing, and 'ping' -> 'pong' is answered without waking the object.
+// One office on every screen: the first viewer is the leader ({ t: 'role', lead: true }) and runs the office.
+// It sends { t: 'snap' } (who's where) while other viewers are watching ({ t: 'peers', n }); we pass it on and keep
+// the latest for screens that join. A viewer that hears nothing for a few seconds sends 'claim' and takes over if
+// we haven't heard from the leader either. A click on a follower is sent to the leader as 'poke'.
 import { DurableObject } from 'cloudflare:workers';
 
 const ORIGINS = [/^https:\/\/timberjones\.github\.io$/, /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/, /^null$/];   // null = a local file
 const DIRS = ['up', 'down', 'left', 'right'];
 const GX = 48, GY = 28;                   // office grid (gm-office.html)
 const MAX_PER_SEC = 40, MAX_LEN = 400;
+const VIEW_PER_SEC = 12, SNAP_LEN = 24000, QUIET_MS = 3000;
 const DAY_FMT = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Toronto', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' });
 function eastern() {   // { day, h }: the same day key as zoneDay() in gm-office.html (e.g. 2026-10-5), and the hour as 15.5
   const o = {}; for (const p of DAY_FMT.formatToParts(new Date())) o[p.type] = p.value;
@@ -59,13 +64,21 @@ export class Office extends DurableObject {
 
   async fetch(req) {
     if (new URL(req.url).pathname === '/count') return this.postCount_(req);
-    const uid = new URL(req.url).searchParams.get('uid');
+    const q = new URL(req.url).searchParams, uid = q.get('uid'), sync = !uid && q.get('sync') === '1';   // older pages don't sync
     const [client, server] = Object.values(new WebSocketPair());
-    this.ctx.acceptWebSocket(server, uid ? ['ctl', 'u' + uid] : ['view']);
-    server.serializeAttachment({ uid: uid || null, last: null, n: 0, t0: 0 });
+    this.ctx.acceptWebSocket(server, uid ? ['ctl', 'u' + uid] : sync ? ['view', 'sync'] : ['view']);
+    let lead = false;
+    if (sync) {   // a screen: it leads if nobody does, otherwise the leader starts sending for it
+      lead = !this.leader_();
+      this.joinAt = Date.now();
+    }
+    server.serializeAttachment({ uid: uid || null, last: null, n: 0, t0: 0, lead });
     const looks = {};
     for (const [k, v] of await this.ctx.storage.list({ prefix: 'look:' })) looks[k.slice(5)] = v;
-    server.send(JSON.stringify({ t: 'state', online: this.online_(server), looks, count: await this.count_() }));   // who's driving right now and where, and everyone's look
+    if (sync) server.send(JSON.stringify({ t: 'role', lead, peers: this.views_().length - 1 }));
+    const snap = this.snap && Date.now() - this.snapAt < 5000 ? JSON.parse(this.snap) : null;
+    server.send(JSON.stringify({ t: 'state', online: this.online_(server), looks, count: await this.count_(), snap }));   // who's driving right now and where, and everyone's look
+    if (sync && !lead) this.tellPeers_();
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -88,6 +101,45 @@ export class Office extends DurableObject {
     return Response.json(c);
   }
 
+  views_() { return this.ctx.getWebSockets('sync').filter(w => w.readyState === 1); }   // screens that take part in syncing
+  leader_() { return this.views_().find(w => { const a = w.deserializeAttachment(); return a && a.lead; }) || null; }
+  tellPeers_() {   // the leader sends snapshots only while someone else is watching
+    const L = this.leader_();
+    if (L) try { L.send(JSON.stringify({ t: 'peers', n: this.views_().length - 1 })); } catch (e) {}
+  }
+  makeLeader_(ws) {
+    for (const w of this.views_()) {
+      const a = w.deserializeAttachment();
+      if (!a || a.lead === (w === ws)) continue;
+      a.lead = w === ws; w.serializeAttachment(a);
+      if (!a.lead) try { w.send(JSON.stringify({ t: 'role', lead: false })); } catch (e) {}
+    }
+    try { ws.send(JSON.stringify({ t: 'role', lead: true, peers: this.views_().length - 1 })); } catch (e) {}
+  }
+
+  viewerMessage_(ws, a, raw) {
+    if (typeof raw !== 'string' || raw.length > SNAP_LEN) return;
+    const now = Date.now();
+    if (now - a.t0 > 1000) { a.t0 = now; a.n = 0; }
+    a.n++; ws.serializeAttachment(a);
+    if (a.n > VIEW_PER_SEC) return;
+    let m;
+    try { m = JSON.parse(raw); } catch (e) { return; }
+    if (!m) return;
+    if (m.t === 'snap') {
+      if (!a.lead) return;
+      this.snap = raw; this.snapAt = now;
+      for (const w of this.views_()) if (w !== ws) try { w.send(raw); } catch (e) {}
+    } else if (m.t === 'claim') {
+      if (a.lead) return;
+      const L = this.leader_();
+      if (!L || now - Math.max(this.snapAt || 0, this.joinAt || 0) > QUIET_MS) this.makeLeader_(ws);
+    } else if (m.t === 'poke') {
+      const i = m.i | 0, L = this.leader_();
+      if (L && L !== ws && i >= -1 && i < 200) try { L.send(JSON.stringify({ t: 'poke', i })); } catch (e) {}
+    }
+  }
+
   online_(except) {
     const out = [];
     for (const ws of this.ctx.getWebSockets('ctl')) {
@@ -105,7 +157,8 @@ export class Office extends DurableObject {
 
   async webSocketMessage(ws, raw) {
     const a = ws.deserializeAttachment();
-    if (!a || !a.uid || typeof raw !== 'string' || raw.length > MAX_LEN) return;   // viewers only listen
+    if (a && !a.uid) return this.viewerMessage_(ws, a, raw);
+    if (!a || typeof raw !== 'string' || raw.length > MAX_LEN) return;
     const now = Date.now();
     if (now - a.t0 > 1000) { a.t0 = now; a.n = 0; }
     if (++a.n > MAX_PER_SEC) { ws.serializeAttachment(a); return; }
@@ -133,6 +186,11 @@ export class Office extends DurableObject {
 
   gone_(ws) {
     const a = ws.deserializeAttachment();
+    if (a && !a.uid) {   // a screen left: if it was leading, the next one takes over
+      if (a.lead) { a.lead = false; try { ws.serializeAttachment(a); } catch (e) {} const next = this.views_().find(w => w !== ws); if (next) this.makeLeader_(next); }
+      else this.tellPeers_();
+      return;
+    }
     if (!a || !a.uid) return;
     const still = this.ctx.getWebSockets('u' + a.uid).some(o => o !== ws && o.readyState === 1);   // another tab of theirs is still open
     if (!still) this.broadcast_(ws, { t: 'bye', uid: a.uid });
