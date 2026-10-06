@@ -119,3 +119,22 @@ Every screen runs the same simulation code, and the simulation is random: who ge
 - The number goes to the relay's `POST /count` with a secret token. Before 2 pm the relay keeps the day's highest number. From 2 pm on it keeps the lowest number and the time it was sent: when the laptop's owner leaves, the TV sends them home and lets the rest leave one by one until 6 pm.
 - **Fallback:** a count only applies to the day it was sent. With no count for today (laptop owner away, laptop asleep, script failed, relay down), the TV uses its usual weekday guess: Tue/Thu 80-95% of desks, Mon/Wed/Fri 10-30%. The office never depends on the script.
 - First real check (2026-10-06): the script said 19 with 20 people in.
+
+### Engineering notes
+
+- **Every live part is optional.** The activity feed, live weather, relay, headcount and screen syncing each fail quietly to a working default:
+  - no relay: each screen runs its own office;
+  - no feed: people just don't speak, and the windows show plain sun;
+  - no headcount for today: the weekday guess.
+
+  No single outage leaves the TV blank, and the page still runs from a local file with everything turned off.
+- **Built to run forever on free tiers.** The whole thing is designed to stay at $0 so nobody ever has to pay for it or turn it off:
+  - GitHub Pages hosts the site, Apps Script serves the feed, and the relay stays on Cloudflare's free plan.
+  - Idle connections cost nothing (WebSocket hibernation), and the leader only sends snapshots while someone else is watching.
+  - The feed caches Redash data for 6 hours and weather for 15 minutes, and the vendor list is downloaded at most once a week.
+- **Data privacy by design.** Only what the office needs leaves anyone's machine, and no names or emails appear anywhere:
+  - The headcount sends a single number. Device addresses and names never leave the laptop, and devices are never matched to people.
+  - The headcount endpoint needs a secret token, kept in a git-ignored file on the laptop and as a Cloudflare secret.
+  - Personalities and speech are mapped by user id to a seat, the same way. The public feed carries ids and work numbers, never who the person is.
+  - API keys live in Apps Script properties and Cloudflare secrets, not in the page.
+- **No dependencies.** The pages are plain HTML, canvas and JavaScript, with no npm packages, framework, bundler or build step. The relay is one ~200-line Worker using only Cloudflare's own APIs. There's nothing to upgrade or patch, and nothing that can break when a library changes.
