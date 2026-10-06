@@ -597,7 +597,7 @@ function addSeat(x, y, face, kind, extra) {
 // desk seats; side seats face the bank (monitor in the next cell), 'down' seats sit behind an office desk
 // role decides who sits there and how they behave (see ROLES); code matches the Seats tab in the GM Office Activity sheet
 const deskSeats = ['cfo', 'coo', 'ceo'].map((role, i) => addSeat(OFFICES[i].x1 - 1, 2, 'right', 'desk', { role, code: role }));   // corner of each L-desk, facing the computer on the wall-side desk
-deskSeats.push(addSeat(7, 5, 'left', 'desk', { role: 'cfoteam', code: 'cfo-team' }));   // CFO's office second desk: someone from his team (no user id)
+deskSeats.push(addSeat(7, 5, 'left', 'desk', { role: 'cfoteam', code: 'cfo-team' }));   // CFO's office second desk: someone from his team (user 1642)
 addSeat(21, 6, 'right', 'desk');   // COO's office second desk: nobody sits there
 const CEO_SIDE_DESK = addSeat(30, 6, 'right', 'desk');                // CEO office's second desk: the HR visitor sometimes sits here
 [11, 13, 15, 17].forEach((y, i) => deskSeats.push(addSeat(8, y, 'left', 'desk', { role: 'am', code: 'am-' + (i + 1) })));   // left wall: account managers
@@ -749,8 +749,7 @@ const ROLES = {
   ceo: { acts: DESKBOUND, talk: 0.5, fixed: true, in: [7.9, 8.4], out: [17.0, 17.6], lunch: 'desk',
     look: { hair: '#8a5a32', skin: 0, shirt: '#f3ecdf', pants: '#3a3f55', style: 'short', build: 'tall' } },
   buyer: { talk: 3, acts: [['type', 26], ['call', 32], ['walkcall', 8], ['chat', 10], ['island', 5], ['coffee', 6], ['water', 3], ['fridge', 2], ['sink', 1], ['wc', 3], ['meeting', 1]] },
-  // account managers' own lines (on top of their feed lines); shown in ALL CAPS like everything they say
-  am: { talk: 1.5, acts: ACTS, lines: ["Hi we're a tree and shrub provider", "Hi, we're Gomaterials, GO-MATERIALS", 'Gimme your list!'] },
+  am: { talk: 1.5, acts: ACTS },
   intern: { talk: 0, acts: [['type', 72], ['coffee', 6], ['water', 4], ['wc', 3], ['fridge', 2], ['sink', 2]] },
   staff: { talk: 1, acts: ACTS },
   product: { talk: 1, fixed: true, days: ['tue', 'thu'], acts: ACTS, look: { hair: '#1a1a24', skin: 1, shirt: '#22b573', pants: '#2f3a5c', style: 'short' } },
@@ -759,7 +758,7 @@ const ROLES = {
   // conference room) and eats there; 'standee' found no seat and hangs around the entrance
   guest: { talk: 1, acts: ACTS.filter(a => a[0] !== 'meeting'), lunch: 'desk' },
   standee: { talk: 1, lines: ['Where do I sit?'], acts: [['loiter', 70], ['coffee', 8], ['water', 8], ['wc', 4]], lunch: 'desk' },
-  cfoteam: { talk: 0, lines: ['nto nto nto...'], acts: [['type', 62], ['call', 18], ['coffee', 6], ['water', 4], ['wc', 3], ['fridge', 2]],
+  cfoteam: { talk: 0, acts: [['type', 62], ['call', 18], ['coffee', 6], ['water', 4], ['wc', 3], ['fridge', 2]],
     look: { hair: '#1a1a24', skin: 2, shirt: '#5b6a95', pants: '#2a2238', style: 'short' } },
   // floater: no desk of her own. Each day she takes the desk of someone who isn't in, and now and then (or when
   // that desk's owner turns up) she gets up and moves to another free one
@@ -772,6 +771,7 @@ const ROLES = {
 // so their personalized lines come from their own activity. Several entries = they take turns at that seat.
 const KNOWN = {
   'product-1': [{ uid: 2372 }],   // product + tech (look comes from ROLES.product)
+  'cfo-team': [{ uid: 1642 }],   // CFO's team member; his "nto nto nto..." lives in the sheet's One-liners tab (look from ROLES.cfoteam)
   'buyer-8': [
     { uid: 2183, look: { hair: '#3a2a20', skin: 0, shirt: '#5b6a95', pants: '#3a3f55', style: 'short' } },
   ],
@@ -2130,6 +2130,9 @@ function sayRandom() {
     const all = speechFor_('all'), talkers = here.filter(w => w.talk > 0 && w.role !== 'product');   // interns + HR never talk; product only says their own lines
     if (all.length && talkers.length) pools.push([() => [weighted(talkers.map(c => [c, c.talk])), pick(all)], 2]);
   }
+  // lines for a whole role: One-liners rows whose User ID is a role code (am, buyer, ...), said by anyone in that role
+  const byRole = here.filter(w => w.talk > 0 && w.role !== 'product').map(w => [w, speechFor_(w.role)]).filter(p => p[1].length);
+  if (byRole.length) pools.push([() => { const [w, lines] = pick(byRole); return [w, pick(lines)]; }, 2]);
   // people with a fixed line of their own (no user id, so not in the feed), e.g. the CFO's team member
   const fixed = here.filter(w => ROLES[w.role] && ROLES[w.role].lines);
   if (fixed.length) pools.push([() => { const w = pick(fixed); return [w, pick(ROLES[w.role].lines)]; }, 1]);
