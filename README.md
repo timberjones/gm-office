@@ -2,7 +2,7 @@
 
 A pixel-art idle screen of the office, made for the office TV. The team works, takes calls, grabs coffee, holds meetings and eats lunch on Eastern time, and the windows show the live weather. You can click anyone to say hi.
 
-- **TV:** https://timberjones.github.io (press F for fullscreen)
+- **TV:** https://timberjones.github.io (F, Enter / the remote's OK button, or a click on an empty spot for fullscreen)
 - **User page:** https://timberjones.github.io/u (walk your own character around the TV from your phone or computer)
 
 ## URL parameters
@@ -42,7 +42,7 @@ Add these to the TV page, for example `timberjones.github.io/?time=12:30&weather
 **User page**
 - `u?id=1234` opens the user page already signed in as that id
 
-**Keys on the TV page:** N night, D day, C back to the real clock, W cycle the weather, B someone says a line now, F fullscreen.
+**Keys on the TV page:** N night, D day, C back to the real clock, W cycle the weather, B someone says a line now, F or Enter (remote OK) fullscreen; clicking an empty spot also toggles it.
 
 ## User page
 

@@ -2438,9 +2438,18 @@ cv.addEventListener('mousemove', e => {
   cv.style.cursor = personAt_(e) ? 'pointer' : 'default';
   clearTimeout(cursorT); cursorT = setTimeout(() => { cv.style.cursor = 'none'; }, 3000);
 });
+// Full screen: F, the remote's OK / Enter, or a click on an empty spot. Old TV browsers only have the webkit- names.
+function toggleFullscreen_() {
+  const d = document, el = d.documentElement;
+  if (d.fullscreenElement || d.webkitFullscreenElement) { (d.exitFullscreen || d.webkitExitFullscreen).call(d); return; }
+  const go = el.requestFullscreen || el.webkitRequestFullscreen || el.webkitRequestFullScreen;
+  if (!go) return;
+  const p = go.call(el);
+  if (p && p.catch) p.catch(() => {});
+}
 cv.addEventListener('click', e => {
   const w = personAt_(e);
-  if (!w) return;
+  if (!w) { toggleFullscreen_(); return; }
   const any = () => CLICK_LINES[Math.floor(Math.random() * CLICK_LINES.length)];   // Math.random: leave the seeded sim untouched
   let text = any();
   for (let k = 0; k < 4 && speakingNow_(w) && speakingNow_(w).text === text; k++) text = any();   // no repeat on a double click
@@ -2448,13 +2457,14 @@ cv.addEventListener('click', e => {
   say_(w, text, 3 + text.length * 0.06, true);
 });
 addEventListener('keydown', e => {
-  const k = e.key.toLowerCase();
+  const k = (e.key || '').toLowerCase();
+  if (k === 'enter' || e.keyCode === 13) { toggleFullscreen_(); return; }
   if (k === 'n') forcedHour = 22;
   else if (k === 'd') forcedHour = 10.5;
   else if (k === 'c') forcedHour = null;
   else if (k === 'b') sayRandom();
   else if (k === 'w') { weather = WEATHERS[(WEATHERS.indexOf(weather) + 1) % 4]; exteriorDirty = true; }
-  else if (k === 'f') { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); }
+  else if (k === 'f') toggleFullscreen_();
 });
 keepFresh_(fetchFeed, 15 * 60 * 1000);   // speech changes every 6 h, the weather every 15 min
 setInterval(() => { MONTH = zoneNow().month || MONTH; }, 3600 * 1000);
