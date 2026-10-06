@@ -2499,8 +2499,8 @@ function setRole_(lead, peers) {
     for (const w of workers) w.ctl = null;
   }
 }
-const idxOf_ = w => w === courier ? -1 : w === waterGuy ? -2 : workers.indexOf(w);
-const whoAt_ = i => i === -1 ? courier : i === -2 ? waterGuy : workers[i];
+const idxOf_ = w => w === courier ? -1 : w === waterGuy ? -2 : dogs.includes(w) ? -3 - dogs.indexOf(w) : workers.indexOf(w);
+const whoAt_ = i => i === -1 ? courier : i === -2 ? waterGuy : i <= -3 ? dogs[-3 - i] : workers[i];
 const ent_ = o => [o.present ? 1 : 0, o.hidden ? 1 : 0, Math.round(o.px * 2) / 2, Math.round(o.py * 2) / 2, o.dir, o.pose,
   o.seated && o.sitAt ? SEATS.indexOf(o.sitAt) : -1, o.headset ? 1 : 0, o.bag ? 1 : 0];
 function sendSnap_() {
@@ -2541,7 +2541,7 @@ let okTexts = null, okFeed = null;
 function okText_(t) {   // only lines this page could have said itself, so a forged snapshot can't put words on the TV
   if (!okTexts || okFeed !== feed) {
     okFeed = feed;
-    const all = [].concat(CLICK_LINES, [ANGRY_LINE], GREETINGS.morning, GREETINGS.bye, COURIER_LINES, WATER_LINES);
+    const all = [].concat(CLICK_LINES, [ANGRY_LINE, WOOF], GREETINGS.morning, GREETINGS.bye, COURIER_LINES, WATER_LINES);
     for (const k in ROLES) if (ROLES[k].lines) all.push(...ROLES[k].lines);
     if (feed) for (const e of feed.feed) if (Array.isArray(e.speech)) all.push(...e.speech);
     okTexts = new Set(all.concat(all.map(x => String(x).toUpperCase())));
@@ -2672,6 +2672,10 @@ function personAt_(e) {   // the front-most person under the mouse, or null
     const h = w.seated ? 13 : 17;   // sprite box from the top of the head down
     if (x >= w.headX - 6 && x <= w.headX + 6 && y >= w.headTop - 1 && y <= w.headTop + h && (!best || w.headTop > best.headTop)) best = w;
   }
+  for (const d of dogs) {   // the poodles: a smaller box around the whole dog
+    if (!d.present) continue;
+    if (x >= d.headX - 6 && x <= d.headX + 5 && y >= d.headTop - 3 && y <= d.headTop + 6 && (!best || d.headTop > best.headTop)) best = d;
+  }
   return best;
 }
 // The cursor hides after a few seconds without movement (and on load), so it doesn't sit on the TV picture.
@@ -2699,7 +2703,9 @@ cv.addEventListener('click', e => {
 // Click spam: after 5 hellos within 10 s, the next click makes them cross. Red face, an anger mark, "STOP
 // CLICKING ME", and clicks on them do nothing for 5 s. Runs on the leader, so every screen sees the same tantrum.
 const ANGRY_LINE = 'STOP CLICKING ME', CLICK_BURST = 5, CLICK_WINDOW = 10, ANGRY_SECS = 5;
+const WOOF = 'Woof!';
 function poke_(w) {
+  if (dogs.includes(w)) { say_(w, WOOF, 2, true); return; }   // click a poodle and it barks
   if (w.angryUntil > TIME) return;   // still cross: clicks do nothing
   w.pokes = (w.pokes || []).filter(t => TIME - t < CLICK_WINDOW);
   if (w.pokes.length >= CLICK_BURST) {

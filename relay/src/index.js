@@ -135,8 +135,8 @@ export class Office extends DurableObject {
       const L = this.leader_();
       if (!L || now - Math.max(this.snapAt || 0, this.joinAt || 0) > QUIET_MS) this.makeLeader_(ws);
     } else if (m.t === 'poke') {
-      const i = m.i | 0, L = this.leader_();
-      if (L && L !== ws && i >= -1 && i < 200) try { L.send(JSON.stringify({ t: 'poke', i })); } catch (e) {}
+      const i = m.i | 0, L = this.leader_();   // -1 courier, -2 water delivery, -3 / -4 the dogs
+      if (L && L !== ws && i >= -4 && i < 200) try { L.send(JSON.stringify({ t: 'poke', i })); } catch (e) {}
     }
   }
 
