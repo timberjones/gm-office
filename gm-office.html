@@ -753,6 +753,10 @@ const ROLES = {
   staff: { talk: 1, acts: ACTS },
   product: { talk: 1, fixed: true, days: ['tue', 'thu'], acts: ACTS, look: { hair: '#1a1a24', skin: 1, shirt: '#22b573', pants: '#2f3a5c', style: 'short' } },
   // CFO's team member at the second desk in the CFO's office: no user id; all he ever says is his one line
+  // townhall overflow (more people than desks): 'guest' works from a spare seat (lunch table, bar stools,
+  // conference room) and eats there; 'standee' found no seat and hangs around the entrance
+  guest: { talk: 1, acts: ACTS.filter(a => a[0] !== 'meeting'), lunch: 'desk' },
+  standee: { talk: 1, lines: ['Where do I sit?'], acts: [['loiter', 70], ['coffee', 8], ['water', 8], ['wc', 4]], lunch: 'desk' },
   cfoteam: { talk: 0, lines: ['nto nto nto...'], acts: [['type', 62], ['call', 18], ['coffee', 6], ['water', 4], ['wc', 3], ['fridge', 2]],
     look: { hair: '#1a1a24', skin: 2, shirt: '#5b6a95', pants: '#2a2238', style: 'short' } },
   // floater: no desk of her own. Each day she takes the desk of someone who isn't in, and now and then (or when
@@ -780,10 +784,10 @@ const KNOWN = {
   'bar-1': [{ uid: 2679, look: { hair: '#2a1a14', skin: 2, shirt: '#5b6a95', pants: '#2a2238', style: 'short', goatee: true } }],
 };
 // @shared-end
-function makeWorker_(seat, i, role) {
+function makeWorker_(seat, i, role, lazyLook) {
   role = role || seat.role;
   const R0 = ROLES[role];
-  const variants = (KNOWN[seat.code] || [{}]).map(p => {
+  const variants = lazyLook ? [{ uid: null, dogOwner: false, look: lazyLook, frames: null }] : (KNOWN[seat.code] || [{}]).map(p => {
     const lk = p.look || R0.look || randomLook();
     return { uid: p.uid || null, dogOwner: !!p.dogOwner, look: lk, frames: buildFrames(lk) };
   });
@@ -810,6 +814,39 @@ workers.push(hrVisitor);
 const floater = makeWorker_({ code: 'floater', x: 0, y: 25, face: 'right', kind: 'door' }, workers.length, 'floater');   // home = whichever free desk she's at
 floater.floater = true;
 workers.push(floater);
+// Townhall days: more people than desks. Up to 30 extra people, created now (same on every screen) but drawn
+// only when they're in, sharing 10 looks so a packed day doesn't run an old TV out of memory.
+const OVERFLOW_MAX = 30;
+const overflowLooks = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(() => randomLook());
+const overflow = [];
+for (let k = 0; k < OVERFLOW_MAX; k++) {
+  const w = makeWorker_({ code: 'extra-' + k, x: 0, y: 25, face: 'right', kind: 'door' }, workers.length, 'guest', overflowLooks[k % 10]);
+  w.overflow = true; w.today = false;
+  workers.push(w); overflow.push(w);
+}
+let standSpots = null;   // where the seatless stand: spread around inside the entrance
+function standSpot_(j) {
+  standSpots = standSpots || FLOOR.filter(([x, y]) => x >= 7 && x <= 15 && y >= 20 && y <= 26 && (x + y) % 2 === 0)
+    .map(([x, y], k) => ({ x, y, face: ['right', 'down', 'up', 'left'][k % 4], kind: 'stand' }));
+  return standSpots[j % standSpots.length];
+}
+// Seat the overflow: lunch table, then the spare bar stools (bottom right), then the conference room; the rest stand.
+function assignOverflow_(want) {
+  const inToday = workers.filter(w => w.today && !w.visitor && !w.overflow).length;
+  const extra = want != null ? Math.max(0, Math.min(OVERFLOW_MAX, want - inToday)) : 0;
+  SEATS.forEach(x => { if (x.owner && x.owner.overflow) x.owner = null; });
+  const hrSeat = hrVisitor.today ? hrVisitor.home : null;
+  const seats = [...LUNCH_SEATS.filter(x => x !== hrSeat), ...SEATS.filter(x => x.stool && !x.owner), ...MEET_SEATS];
+  overflow.forEach((w, k) => {
+    w.today = k < extra;
+    if (!w.today) return;
+    const seat = seats[k];
+    if (seat) { w.home = seat; seat.owner = w; w.role = 'guest'; }
+    else { w.home = standSpot_(k - seats.length); w.role = 'standee'; }
+    w.acts = ROLES[w.role].acts; w.lunchMode = 'desk';
+    if (!w.present) Object.assign(w, { px: w.home.x * C8, py: w.home.y * C8, tx: w.home.x, ty: w.home.y });
+  });
+}
 // A desk she can take: an island / wall desk whose owner isn't in today and that nobody is sitting at.
 const FLOAT_DESK = /^(buyer|intern|am)-/;
 function freeDesk_(w, rf) {
@@ -838,7 +875,7 @@ function pickRoster() {
   const r = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   const frac = z.wd === 'tue' || z.wd === 'thu' ? 0.8 + 0.15 * r() : z.wd === 'sat' || z.wd === 'sun' ? 0 : 0.1 + 0.2 * r();
   const weekday = z.wd !== 'sat' && z.wd !== 'sun';
-  const rest = workers.filter(w => !w.fixed && w.role !== 'hr' && !w.visitor);   // the execs and product come in (execs every weekday, product Tue/Thu)
+  const rest = workers.filter(w => !w.fixed && w.role !== 'hr' && !w.visitor && !w.overflow);   // the execs and product come in (execs every weekday, product Tue/Thu)
   // HR visits ~30% of weekdays and picks one of her two spots for the day
   HR_SEATS.forEach(s => { s.owner = null; });
   hrVisitor.today = weekday && PEOPLE == null && r() < 0.3;
@@ -869,6 +906,7 @@ function pickRoster() {
     w.v = w.variants[Math.floor(r() * w.variants.length)];
     w.look = w.v.look; w.frames = w.v.frames;
   });
+  assignOverflow_(want);   // more people than desks (townhall): spare seats, then the entrance
   if (pm) windDown_(pm);
 }
 // The afternoon count was posted from the product laptop at pm.h, with pm.n people (that laptop included) still in.
@@ -908,7 +946,11 @@ function standUp(w) {
 }
 const atDesk = w => w.seated && w.sitAt === w.home;
 function* sitFor(w, t) { while ((t > 0 || w.held) && !(w.summon && !w.held) && !w.fetch) { t -= DT; yield 0; } }
-function* goHome(w) { yield* walkTo(w, w.home.x, w.home.y); sit(w, w.home); }
+function* goHome(w) { yield* walkTo(w, w.home.x, w.home.y); placeAtHome_(w); }
+function placeAtHome_(w) {   // sit at their seat, or (no seat: townhall overflow) just stand there
+  if (w.home.kind !== 'stand') { sit(w, w.home); return; }
+  Object.assign(w, { px: w.home.x * C8, py: w.home.y * C8, tx: w.home.x, ty: w.home.y, dir: w.home.face, pose: 'stand', seated: false });
+}
 
 function* life(w) {
   if (w.present) yield* sitFor(w, rnd(1, 25));   // stagger: people already at work don't all start something at once
@@ -958,7 +1000,16 @@ function* activity(w) {
   } else if (a === 'call') yield* deskCall(w);
   else if (a === 'walkcall') yield* walkCall(w);
   else if (a === 'chat') yield* doChat(w);
-  else if (a === 'meeting') yield* startMeeting(w);  else yield* visit(w, a);
+  else if (a === 'meeting') yield* startMeeting(w);
+  else if (a === 'loiter') yield* loiter(w);
+  else yield* visit(w, a);
+}
+function* loiter(w) {   // no seat: drift around inside the entrance, and now and then ask
+  const [x, y] = pick(FLOOR.filter(([x, y]) => x >= 7 && x <= 15 && y >= 20 && y <= 26));
+  yield* walkTo(w, x, y);
+  w.pose = 'stand'; w.dir = pick(['up', 'down', 'left', 'right']);
+  if (chance(0.15)) sayLine_(w, 'Where do I sit?', false);
+  yield rnd(6, 16);
 }
 // The floater moves to another free desk (and says so).
 function* reseat(w) {
@@ -1061,7 +1112,7 @@ function* lunchAtTable(w) {
 // meetings in the glass room top-right
 let meeting = null;
 function* startMeeting(w) {
-  if (meeting) { yield* sitFor(w, 8); return; }
+  if (meeting || MEET_SEATS.some(x => x.owner && x.owner.present)) { yield* sitFor(w, 8); return; }   // townhall: people are working in there
   const cands = shuffle(workers.filter(o => o !== w && o.present && atDesk(o) && o.pose === 'type' && !o.held && !o.summon && !o.ctl && o.acts !== DESKBOUND && o.role !== 'hr'));   // execs and HR aren't pulled into meetings
   if (!cands.length) { yield* sitFor(w, 8); return; }
   const members = [w, ...cands.slice(0, irnd(1, Math.min(MEET_SEATS.length - 1, 5, cands.length)))];
@@ -1909,6 +1960,7 @@ function drawWall() {
 // ---------------------------------------------------------------- people drawing
 function drawPerson(w) {
   if (w.hidden) return;
+  if (!w.frames) { if (!w.v || !w.v.look) return; w.frames = w.v.frames = framesFor_(w.v.look); }   // overflow: built on first appearance
   const X = snap(w.px), Y = snap(w.py), F = w.frames;   // half-pixel positions when supersampling
   let sx = X - 2;
   let c, sy, view;
@@ -2676,7 +2728,7 @@ function rosterNow_() {
     if (w.ctl || w.visitor) continue;
     const want = wantPresent(w);
     if (w.present && !want) { standUp(w); Object.assign(w, { present: false, tx: -1, ty: -1 }); w.co.restart(() => life(w)); }
-    else if (!w.present && want) { w.present = true; sit(w, w.home); w.greeted = rosterKey; w.co.restart(() => life(w)); }
+    else if (!w.present && want) { w.present = true; placeAtHome_(w); w.greeted = rosterKey; w.co.restart(() => life(w)); }
   }
 }
 
@@ -2684,7 +2736,7 @@ function rosterNow_() {
 buildSprites();
 buildLayers();
 buildDrawables();
-for (const w of workers) if (wantPresent(w)) { w.present = true; sit(w, w.home); w.greeted = rosterKey; }   // already at work when the page opens (and already said good morning)
+for (const w of workers) if (wantPresent(w)) { w.present = true; placeAtHome_(w); w.greeted = rosterKey; }   // already at work when the page opens (and already said good morning)
 const extraCos = { roomba: new Co(roombaLife), dog0: new Co(() => dogLife(dogs[0], dogs[1])), dog1: new Co(() => dogLife(dogs[1], dogs[0])), courier: new Co(courierLife), water: new Co(waterLife) };
 const cos = [...workers.map(w => (w.co = new Co(() => life(w), w))), ...Object.values(extraCos)];
 if (!params.has('seed')) seed = (Math.random() * 1e9) | 0;
