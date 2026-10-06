@@ -30,6 +30,7 @@ Add these to the TV page, for example `timberjones.github.io/?time=12:30&weather
 - `?weather=rain` forces `sun`, `cloud`, `rain` or `snow` (default: live Montreal weather from the feed)
 - `?dogs=1` brings the poodles in right away (they're only around 9:00-16:30)
 - `?delivery=1` sends a food courier in right away
+- `?water=1` sends the water delivery in right away (otherwise it comes at random, 8:30-16:30, not every day)
 - `?seed=N` fixes the randomness so the day plays out the same way each time
 
 **Speech and live data**

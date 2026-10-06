@@ -1217,6 +1217,43 @@ function* fetchDelivery(w) {
   yield* goHome(w);
   w.bag = false;
 }
+// ---------------------------------------------------------------- water delivery (now and then, 8:30-16:30)
+// Someone from the water company walks in with a big jug on their shoulder, goes to the water cooler, swaps the
+// jug (it disappears into the cooler), says so, and walks back out. ?water=1 sends one right away.
+const WATER_LINES = ['Water delivery!', 'Fresh water for the cooler!', 'Fresh jug, all set!', 'Stay hydrated, folks!'];
+const waterGuy = { role: 'water', talk: 1, present: false, hidden: false, seated: false, headset: false, bag: false, jug: false,
+  px: 0, py: 0, tx: -1, ty: -1, dir: 'right', walkT: 0, pose: 'stand', bubble: null, headX: 0, headTop: 0, v: {}, frames: null };
+let waterPending = params.get('water') === '1';
+function* waterLife() {
+  yield rnd(5, 30);
+  for (;;) {
+    const h = world.hour, anyone = workers.some(w => w.present && w.px >= 0);
+    if (waterPending || (h >= 8.5 && h < 16.5 && anyone && chance(0.15))) {
+      waterPending = false;
+      yield* waterVisit();
+      yield rnd(7200, 14400);   // 2-4 hours before the next one could come
+    } else yield rnd(600, 1800);
+  }
+}
+function* waterVisit() {
+  const look = { hair: pick(HAIRS), skin: irnd(0, 4), shirt: pick(['#3b6fd6', '#6aa0c8', '#2f3a5c']), pants: pick(PANTS), style: 'short', hat: pick(['#3b6fd6', '#f3ecdf', null]) };
+  const row = chance(0.5) ? 25 : 26, spot = SPOTS.water.spots[0];
+  Object.assign(waterGuy, { frames: buildFrames(look), look, present: true, hidden: false, jug: true, px: hallX(), py: row * C8, tx: -1, ty: -1, pose: 'walk' });
+  yield* walkStraight(waterGuy, 0, row * C8);
+  waterGuy.tx = 0; waterGuy.ty = row;
+  yield* walkTo(waterGuy, spot.x, spot.y);
+  waterGuy.dir = spot.face; waterGuy.pose = 'stand';
+  spot.busy = waterGuy;   // nobody else uses the cooler while the jug goes in
+  yield 1.2;
+  waterGuy.jug = false;   // swapped into the cooler
+  sayLine_(waterGuy, pick(WATER_LINES), true);
+  yield 2.5;
+  if (spot.busy === waterGuy) spot.busy = null;
+  const out = chance(0.5) ? 25 : 26;
+  yield* walkTo(waterGuy, 0, out);
+  yield* walkStraight(waterGuy, hallX(), out * C8);
+  waterGuy.present = false;
+}
 // a one-off line (courier, deliveries); force = replace what this person is saying right now
 function sayLine_(w, text, force) {
   if (!CHAT || w.hidden) return;
@@ -1868,6 +1905,11 @@ function drawPerson(w) {
   w.headX = sx + 6; w.headTop = sy + 1;
   if (w.headset) drawHeadset(sx, sy + 1, view);
   if (w.angryUntil > TIME) drawAngry_(sx, sy, view);
+  if (w.jug && !w.seated) {   // big blue water jug
+    const jx = w.dir === 'left' ? sx - 3 : w.dir === 'down' ? sx + 3 : sx + 9, jy = sy + 6;
+    R(jx - 1, jy - 1, 7, 10, OUT); R(jx, jy + 2, 5, 7, '#7fb8e8'); R(jx + 1, jy, 3, 2, '#3b6fd6');
+    R(jx + 1, jy + 3, 1, 4, '#d8ecfa'); R(jx, jy + 5, 5, 1, '#5d9ad6');
+  }
   if (w.bag && !w.seated) { const bx = sx + (w.dir === 'left' ? -1 : 9), by = sy + 10; R(bx - 1, by - 1, 6, 7, OUT); R(bx, by, 4, 5, '#c8a070'); R(bx, by, 4, 1, '#a8804a'); P(bx + 1, by + 2, '#d9453b'); }   // paper food bag
 }
 function drawAngry_(sx, sy, view) {   // red in the face, and a pulsing cartoon anger mark beside the head (the bubble is above it)
@@ -2190,6 +2232,7 @@ function render() {
   list.push({ key: roomba.py + 4, draw: drawRoomba });
   for (const d of dogs) if (d.present) list.push({ key: d.py + C8 + 0.45, draw: () => drawDog(d) });
   if (courier.present) list.push({ key: courier.py + C8 + 0.5, draw: () => drawPerson(courier) });
+  if (waterGuy.present) list.push({ key: waterGuy.py + C8 + 0.5, draw: () => drawPerson(waterGuy) });
   list.sort((a, b) => a.key - b.key);
   for (const it of list) it.draw();
   // weather over the outdoor alley only (it falls a little past the roof edge onto it)
@@ -2381,7 +2424,7 @@ function onRelay_(m) {
   if (m.t === 'role') { setRole_(m.lead, m.peers); return; }
   if (m.t === 'peers') { syncPeers = m.n | 0; if (syncMode === 'lead' && syncPeers) sendSnap_(); return; }
   if (m.t === 'snap') { if (syncMode === 'follow') applySnap_(m); return; }
-  if (m.t === 'poke') { if (syncMode !== 'follow') { const w = m.i === -1 ? courier : workers[m.i]; if (w && w.present && !w.hidden) poke_(w); } return; }
+  if (m.t === 'poke') { if (syncMode !== 'follow') { const w = whoAt_(m.i); if (w && w.present && !w.hidden) poke_(w); } return; }
   if (m.t === 'state') {   // (re)connected: everyone's looks, and exactly these people are driving right now
     for (const [uid, look] of Object.entries(m.looks || {})) applyLook_(uid, look);
     if (m.count) { liveCount = m.count; rosterNow_(); }
@@ -2456,6 +2499,8 @@ function setRole_(lead, peers) {
     for (const w of workers) w.ctl = null;
   }
 }
+const idxOf_ = w => w === courier ? -1 : w === waterGuy ? -2 : workers.indexOf(w);
+const whoAt_ = i => i === -1 ? courier : i === -2 ? waterGuy : workers[i];
 const ent_ = o => [o.present ? 1 : 0, o.hidden ? 1 : 0, Math.round(o.px * 2) / 2, Math.round(o.py * 2) / 2, o.dir, o.pose,
   o.seated && o.sitAt ? SEATS.indexOf(o.sitAt) : -1, o.headset ? 1 : 0, o.bag ? 1 : 0];
 function sendSnap_() {
@@ -2463,9 +2508,10 @@ function sendSnap_() {
     t: 'snap', v: SYNC_V, h: hallX(),
     w: workers.map(w => ent_(w).concat([Math.max(0, w.variants.indexOf(w.v)), w.visitor ? w.v.uid : 0, w.angryUntil > TIME ? Math.round((w.angryUntil - TIME) * 10) / 10 : 0])),
     c: courier.present && courier.look ? ent_(courier).concat([courier.look]) : null,
+    j: waterGuy.present && waterGuy.look ? ent_(waterGuy).concat([waterGuy.look, waterGuy.jug ? 1 : 0]) : null,
     d: dogs.map(d => [d.present ? 1 : 0, Math.round(d.px * 2) / 2, Math.round(d.py * 2) / 2, d.dir, d.pose]),
     r: [Math.round(roomba.px * 2) / 2, Math.round(roomba.py * 2) / 2, roomba.dir, roomba.tx, roomba.ty],
-    s: speeches.map(x => [x.w === courier ? -1 : workers.indexOf(x.w), x.text, Math.round(x.t * 10) / 10, x.life, x.greet ? 1 : 0]),
+    s: speeches.map(x => [idxOf_(x.w), x.text, Math.round(x.t * 10) / 10, x.life, x.greet ? 1 : 0]),
   });
 }
 setInterval(() => {
@@ -2495,7 +2541,7 @@ let okTexts = null, okFeed = null;
 function okText_(t) {   // only lines this page could have said itself, so a forged snapshot can't put words on the TV
   if (!okTexts || okFeed !== feed) {
     okFeed = feed;
-    const all = [].concat(CLICK_LINES, [ANGRY_LINE], GREETINGS.morning, GREETINGS.bye, COURIER_LINES);
+    const all = [].concat(CLICK_LINES, [ANGRY_LINE], GREETINGS.morning, GREETINGS.bye, COURIER_LINES, WATER_LINES);
     for (const k in ROLES) if (ROLES[k].lines) all.push(...ROLES[k].lines);
     if (feed) for (const e of feed.feed) if (Array.isArray(e.speech)) all.push(...e.speech);
     okTexts = new Set(all.concat(all.map(x => String(x).toUpperCase())));
@@ -2526,11 +2572,15 @@ function applySnap_(m) {
     applyEnt_(w, e);
     w.angryUntil = e[11] > 0 ? TIME + num_(e[11], 0, ANGRY_SECS) : 0;
   });
-  if (Array.isArray(m.c) && m.c[9] && typeof m.c[9] === 'object') {
-    const lk = m.c[9], key = JSON.stringify(lk);
-    if (key !== courier.lookKey) { try { courier.frames = buildFrames(lk); courier.look = lk; courier.lookKey = key; } catch (er) { courier.frames = null; } }
-    if (courier.frames) applyEnt_(courier, m.c);
-  } else courier.present = false;
+  const guest = (o, e) => {   // a courier: look sent along, since it's picked fresh each visit
+    if (!(Array.isArray(e) && e[9] && typeof e[9] === 'object')) { o.present = false; return; }
+    const key = JSON.stringify(e[9]);
+    if (key !== o.lookKey) { try { o.frames = buildFrames(e[9]); o.look = e[9]; o.lookKey = key; } catch (er) { o.frames = null; } }
+    if (o.frames) applyEnt_(o, e); else o.present = false;
+  };
+  guest(courier, m.c);
+  guest(waterGuy, m.j);
+  waterGuy.jug = !!(Array.isArray(m.j) && m.j[10]);
   if (Array.isArray(m.d)) m.d.forEach((e, i) => {
     const d = dogs[i];
     if (!d || !Array.isArray(e)) return;
@@ -2542,7 +2592,7 @@ function applySnap_(m) {
     roomba.dir = FACES.includes(m.r[2]) ? m.r[2] : 'down'; roomba.tx = m.r[3] | 0; roomba.ty = m.r[4] | 0;
   }
   if (Array.isArray(m.s)) speeches = m.s.filter(x => Array.isArray(x) && typeof x[1] === 'string' && okText_(x[1]))
-    .map(x => ({ w: x[0] === -1 ? courier : workers[x[0]], text: x[1], t: num_(x[2], 0, 600), life: num_(x[3], 0, 600), greet: !!x[4] }))
+    .map(x => ({ w: whoAt_(x[0]), text: x[1], t: num_(x[2], 0, 600), life: num_(x[3], 0, 600), greet: !!x[4] }))
     .filter(x => x.w).slice(-MAX_BUBBLES);
 }
 function followStep_(dt) {   // glide everyone toward the latest snapshot
@@ -2554,7 +2604,7 @@ function followStep_(dt) {   // glide everyone toward the latest snapshot
     }
     if (o.pose === 'walk') o.walkT += dt;
   };
-  workers.forEach(glide); dogs.forEach(glide); glide(courier); glide(roomba);
+  workers.forEach(glide); dogs.forEach(glide); glide(courier); glide(waterGuy); glide(roomba);
 }
 function seededLook_(uid) {   // a visitor with no look of their own: the same random look on every screen
   const keep = seed; seed = 0; for (const ch of String(uid)) seed = (Math.imul(seed, 31) + ch.charCodeAt(0)) | 0;
@@ -2581,9 +2631,10 @@ function takeCharge_() {
   }
   dogs.forEach(d => { d.present = false; d.glide = null; });
   courier.present = false; courier.glide = null;
+  waterGuy.present = false; waterGuy.glide = null; waterGuy.jug = false; SPOTS.water.spots[0].busy = null;
   Object.assign(roomba, { px: DOCK.x * C8, py: DOCK.y * C8, tx: DOCK.x, ty: DOCK.y, glide: null });
   extraCos.dog0.restart(() => dogLife(dogs[0], dogs[1])); extraCos.dog1.restart(() => dogLife(dogs[1], dogs[0]));
-  extraCos.courier.restart(courierLife); extraCos.roomba.restart(roombaLife);
+  extraCos.courier.restart(courierLife); extraCos.water.restart(waterLife); extraCos.roomba.restart(roombaLife);
 }
 // Today's real headcount arrived: right after the page opens, just swap who's at their desk (nobody walks in or
 // out because the page started with the weekday guess); later on, people come and go on foot as usual.
@@ -2603,7 +2654,7 @@ buildSprites();
 buildLayers();
 buildDrawables();
 for (const w of workers) if (wantPresent(w)) { w.present = true; sit(w, w.home); w.greeted = rosterKey; }   // already at work when the page opens (and already said good morning)
-const extraCos = { roomba: new Co(roombaLife), dog0: new Co(() => dogLife(dogs[0], dogs[1])), dog1: new Co(() => dogLife(dogs[1], dogs[0])), courier: new Co(courierLife) };
+const extraCos = { roomba: new Co(roombaLife), dog0: new Co(() => dogLife(dogs[0], dogs[1])), dog1: new Co(() => dogLife(dogs[1], dogs[0])), courier: new Co(courierLife), water: new Co(waterLife) };
 const cos = [...workers.map(w => (w.co = new Co(() => life(w), w))), ...Object.values(extraCos)];
 if (!params.has('seed')) seed = (Math.random() * 1e9) | 0;
 if (params.get('dogs') === '1') dogs.forEach(d => { d.follow = true; });   // preview: both poodles come in right away
@@ -2616,7 +2667,7 @@ const CLICK_LINES = ["Hi, what's up?", "I'm busy!", 'Trying to find a tree, want
 function personAt_(e) {   // the front-most person under the mouse, or null
   const dpr = window.devicePixelRatio || 1, x = e.clientX * dpr / scale - OX, y = e.clientY * dpr / scale - OY;
   let best = null;
-  for (const w of [...workers, courier]) {
+  for (const w of [...workers, courier, waterGuy]) {
     if (!w.present || w.hidden || !w.frames) continue;
     const h = w.seated ? 13 : 17;   // sprite box from the top of the head down
     if (x >= w.headX - 6 && x <= w.headX + 6 && y >= w.headTop - 1 && y <= w.headTop + h && (!best || w.headTop > best.headTop)) best = w;
@@ -2642,7 +2693,7 @@ function toggleFullscreen_() {
 cv.addEventListener('click', e => {
   const w = personAt_(e);
   if (!w) { toggleFullscreen_(); return; }
-  if (syncMode === 'follow') { relaySend_({ t: 'poke', i: w === courier ? -1 : workers.indexOf(w) }); return; }   // the leader answers for everyone
+  if (syncMode === 'follow') { relaySend_({ t: 'poke', i: idxOf_(w) }); return; }   // the leader answers for everyone
   poke_(w);
 });
 // Click spam: after 5 hellos within 10 s, the next click makes them cross. Red face, an anger mark, "STOP
