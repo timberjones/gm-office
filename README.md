@@ -51,7 +51,7 @@ Add these to the TV page, for example `timberjones.github.io/?time=12:30&weather
 **User page**
 - `u?id=1234` opens the user page already signed in as that id
 
-**Keys on the TV page:** N night, D day, C back to the real clock, W cycle the weather, B someone says a line now, F or Enter (remote OK) fullscreen. Clicking an empty spot also toggles fullscreen; clicking a person makes them say hi.
+**Keys on the TV page:** N night, D day, C back to the real clock, W cycle the weather, B someone says a line now, F or Enter (remote OK) fullscreen. Clicking an empty spot also toggles fullscreen; clicking a person makes them say hi (click them more than 5 times in 10 seconds and they get angry: "STOP CLICKING ME", and they ignore clicks for 5 seconds).
 
 ## User page
 

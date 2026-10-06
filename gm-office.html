@@ -1867,7 +1867,18 @@ function drawPerson(w) {
   blit(c, sx, sy);
   w.headX = sx + 6; w.headTop = sy + 1;
   if (w.headset) drawHeadset(sx, sy + 1, view);
+  if (w.angryUntil > TIME) drawAngry_(sx, sy, view);
   if (w.bag && !w.seated) { const bx = sx + (w.dir === 'left' ? -1 : 9), by = sy + 10; R(bx - 1, by - 1, 6, 7, OUT); R(bx, by, 4, 5, '#c8a070'); R(bx, by, 4, 1, '#a8804a'); P(bx + 1, by + 2, '#d9453b'); }   // paper food bag
+}
+function drawAngry_(sx, sy, view) {   // red in the face, and a pulsing cartoon anger mark beside the head (the bubble is above it)
+  g.fillStyle = 'rgba(217,40,30,0.55)';
+  if (view === 'left') g.fillRect(sx + 1, sy + 4, 5, 4);
+  else if (view === 'right') g.fillRect(sx + 6, sy + 4, 5, 4);
+  else if (view === 'down') g.fillRect(sx + 3, sy + 4, 6, 4);   // seen from behind ('up'): no face to flush
+  const big = (TIME * 4 | 0) % 2, red = '#d9453b';
+  const x = view === 'right' ? sx - 4 - big : sx + 11, y = sy + 1 - big;   // on the side away from the face
+  const mark = big ? ['.X.X.', 'XX.XX', '.....', 'XX.XX', '.X.X.'] : ['X.X', '...', 'X.X'];
+  mark.forEach((row, j) => { for (let i = 0; i < row.length; i++) if (row[i] === 'X') P(x + i, y + j, red); });
 }
 function groundShadow_(cx, cy, rx) {   // soft oval shadow at the feet (light comes from the top-left)
   g.fillStyle = 'rgba(40,20,8,0.22)';
@@ -2450,7 +2461,7 @@ const ent_ = o => [o.present ? 1 : 0, o.hidden ? 1 : 0, Math.round(o.px * 2) / 2
 function sendSnap_() {
   relaySend_({
     t: 'snap', v: SYNC_V, h: hallX(),
-    w: workers.map(w => ent_(w).concat([Math.max(0, w.variants.indexOf(w.v)), w.visitor ? w.v.uid : 0])),
+    w: workers.map(w => ent_(w).concat([Math.max(0, w.variants.indexOf(w.v)), w.visitor ? w.v.uid : 0, w.angryUntil > TIME ? Math.round((w.angryUntil - TIME) * 10) / 10 : 0])),
     c: courier.present && courier.look ? ent_(courier).concat([courier.look]) : null,
     d: dogs.map(d => [d.present ? 1 : 0, Math.round(d.px * 2) / 2, Math.round(d.py * 2) / 2, d.dir, d.pose]),
     r: [Math.round(roomba.px * 2) / 2, Math.round(roomba.py * 2) / 2, roomba.dir, roomba.tx, roomba.ty],
@@ -2484,7 +2495,7 @@ let okTexts = null, okFeed = null;
 function okText_(t) {   // only lines this page could have said itself, so a forged snapshot can't put words on the TV
   if (!okTexts || okFeed !== feed) {
     okFeed = feed;
-    const all = [].concat(CLICK_LINES, GREETINGS.morning, GREETINGS.bye, COURIER_LINES);
+    const all = [].concat(CLICK_LINES, [ANGRY_LINE], GREETINGS.morning, GREETINGS.bye, COURIER_LINES);
     for (const k in ROLES) if (ROLES[k].lines) all.push(...ROLES[k].lines);
     if (feed) for (const e of feed.feed) if (Array.isArray(e.speech)) all.push(...e.speech);
     okTexts = new Set(all.concat(all.map(x => String(x).toUpperCase())));
@@ -2513,6 +2524,7 @@ function applySnap_(m) {
     const v = w.variants[e[9] | 0];
     if (v && v !== w.v) { w.v = v; w.look = v.look; w.frames = v.frames; }
     applyEnt_(w, e);
+    w.angryUntil = e[11] > 0 ? TIME + num_(e[11], 0, ANGRY_SECS) : 0;
   });
   if (Array.isArray(m.c) && m.c[9] && typeof m.c[9] === 'object') {
     const lk = m.c[9], key = JSON.stringify(lk);
@@ -2633,7 +2645,18 @@ cv.addEventListener('click', e => {
   if (syncMode === 'follow') { relaySend_({ t: 'poke', i: w === courier ? -1 : workers.indexOf(w) }); return; }   // the leader answers for everyone
   poke_(w);
 });
+// Click spam: after 5 hellos within 10 s, the next click makes them cross. Red face, an anger mark, "STOP
+// CLICKING ME", and clicks on them do nothing for 5 s. Runs on the leader, so every screen sees the same tantrum.
+const ANGRY_LINE = 'STOP CLICKING ME', CLICK_BURST = 5, CLICK_WINDOW = 10, ANGRY_SECS = 5;
 function poke_(w) {
+  if (w.angryUntil > TIME) return;   // still cross: clicks do nothing
+  w.pokes = (w.pokes || []).filter(t => TIME - t < CLICK_WINDOW);
+  if (w.pokes.length >= CLICK_BURST) {
+    w.pokes = []; w.angryUntil = TIME + ANGRY_SECS;
+    say_(w, ANGRY_LINE, ANGRY_SECS, true);
+    return;
+  }
+  w.pokes.push(TIME);
   const any = () => CLICK_LINES[Math.floor(Math.random() * CLICK_LINES.length)];   // Math.random: leave the seeded sim untouched
   let text = any();
   for (let k = 0; k < 4 && speakingNow_(w) && speakingNow_(w).text === text; k++) text = any();   // no repeat on a double click
