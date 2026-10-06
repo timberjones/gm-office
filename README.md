@@ -78,3 +78,44 @@ Open `/u`, type your user id (or `1111`, or "I'm new here", to come in as someon
   - **One office on every screen.** The first screen to connect (normally the TV) leads: it runs the office and, while anyone else is watching, sends a snapshot of everyone's position, pose and speech bubble 4 times a second. Every other screen draws those snapshots and glides people between them, so the TV, your computer and anyone else's all show the same thing. Clicking someone on a follower asks the leader, so everyone sees the same hello. If the leader closes or goes quiet for 3 seconds, another screen takes over from where things stand. Faces, chair colours and arrival times come from a fixed seed, so they match on every screen too. Without the relay, each screen simply runs its own office.
   - To deploy: `cd relay && npx wrangler@4 deploy`.
 - **Live headcount (optional).** [tools/office-headcount.ps1](tools/office-headcount.ps1) runs on a laptop in the office (7:00-10:00 and 15:00-16:30 every 30 min, and at logon, via `tools/install-headcount-task.ps1`). Only on a GoMaterials Wi-Fi, it counts laptops on the subnet by MAC vendor and posts the number to the relay's `POST /count` (Bearer `COUNT_TOKEN` secret). The relay keeps the morning peak and the lowest afternoon count (from 2 pm, with the time of the last one) and sends them to every TV. The TV uses them as today's headcount, and from the afternoon count it sends the product seat home and lets the rest leave one by one until 6 pm; with no count for today, the TV uses its usual weekday guess.
+
+## Under the hood (for the tech geeks)
+
+### Cloudflare Durable Objects: WebSockets without a server
+
+Live features (driving your character, syncing screens, the headcount) need something that holds open connections and keeps a little state. A normal serverless function can't: each request runs separately and forgets everything. A **Durable Object** is the in-between. It's a single JavaScript object with a name, its own memory and its own SQLite storage, and Cloudflare makes sure only one copy exists anywhere.
+
+- The Worker sends every connection to one object named `office`, so every TV, phone and laptop talks to the same place. Broadcasting is just a loop over its open sockets.
+- **Hibernation** keeps it free: when nothing is being sent, Cloudflare unloads the object but keeps the sockets open. Keep-alive pings get an automatic `pong` without waking it.
+- Looks (`look:<uid>`) and today's headcount (`count`) go in its built-in storage. The latest sync snapshot stays in memory only, since it's only useful for a few seconds.
+- No servers, no database to run, no open ports, and the whole relay is about 200 lines ([relay/src/index.js](relay/src/index.js)).
+
+### Weather: the windows match the sky outside
+
+- The Apps Script feed asks OpenWeather for Montreal's current conditions, caches the answer for 15 minutes, and reduces it to one word: `sun`, `cloud`, `rain` or `snow`. The API key lives in the script's properties, never in the page.
+- The TV checks the feed every 15 minutes (retrying faster if it boots offline). Rain and snow fall past the windows and over the alley, snow whitens the ground, and clouds drift shadows across the parking lot.
+- Daylight follows Montreal's real sunrise and sunset for the month, on Eastern time, so the office darkens and the alley lamps come on at the right hour.
+
+### Leader and followers: one office on every screen
+
+Every screen runs the same simulation code, and the simulation is random: who gets up for coffee, who talks, which way someone walks. Left alone, two screens drift apart within seconds. Instead of trying to keep two random simulations in step, only one screen simulates at a time.
+
+- **Election:** the first screen to connect with `?sync=1` (every current page does) is the leader. The relay tracks the role in each socket's attachment, so it survives hibernation.
+- **Snapshots:** while at least one other screen is watching, the leader sends about 2 KB of JSON 4 times a second. That covers each person's position, pose, seat and speech bubble, plus the dogs, the courier and the roomba. With nobody else watching it sends nothing.
+- **Followers** don't simulate. They glide each person toward the latest snapshot over 250 ms. Seats are sent as indexes into the shared seat list, and hallway positions are rescaled because each screen's width differs. Speech text is only shown if it's a line the page already knows, so a forged snapshot can't put words on the TV.
+- **Clicks** on a follower go to the leader as a `poke`. The leader picks the line, and it comes back to everyone in the next snapshot.
+- **Failover:** a follower that hears nothing for 3 s sends `claim`. The relay agrees only if it hasn't heard from the leader either. The new leader restarts everyone's routine from where they stand. If the leader's socket closes, the relay promotes the next screen right away.
+- **Version check:** snapshots carry the seat and worker counts, so a TV still running an old page ignores them instead of drawing nonsense.
+- **When nobody is watching** (say, the TV off overnight), nothing runs anywhere, and nothing needs to. Who's in is worked out from the date and time, so the next screen to open rebuilds the office as it should be at that moment. Faces, chair colours and arrival times come from a fixed seed, so they're identical on every screen.
+
+### Seat count: a real headcount, with a fallback
+
+- [tools/office-headcount.ps1](tools/office-headcount.ps1) runs on one laptop: 7:00-10:00 and 15:00-16:30 every 30 minutes, and at logon. It only runs on a GoMaterials Wi-Fi.
+- **How it counts:**
+  - It pings every address on the subnet, slowly. Firewalled laptops ignore the ping but still answer ARP, so they still land in Windows' neighbour table.
+  - It reads that table and identifies each device's maker from the first half of its MAC address, using Wireshark's public manufacturer list (cached locally, refreshed at most weekly).
+  - It counts only laptops: PC Wi-Fi chip makers (Intel, AzureWave, Liteon, Realtek, Foxconn/Fugui...) and Apple devices with a fixed address.
+  - It skips randomized MACs (phones), smart-home devices, printers and network gear. It's anonymous: only a number leaves the laptop.
+- The number goes to the relay's `POST /count` with a secret token. Before 2 pm the relay keeps the day's highest number. From 2 pm on it keeps the lowest number and the time it was sent: when the laptop's owner leaves, the TV sends them home and lets the rest leave one by one until 6 pm.
+- **Fallback:** a count only applies to the day it was sent. With no count for today (laptop owner away, laptop asleep, script failed, relay down), the TV uses its usual weekday guess: Tue/Thu 80-95% of desks, Mon/Wed/Fri 10-30%. The office never depends on the script.
+- First real check (2026-10-06): the script said 19 with 20 people in.
