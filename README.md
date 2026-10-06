@@ -2,8 +2,17 @@
 
 A pixel-art idle screen of the office, made for the office TV. The team works, takes calls, grabs coffee, holds meetings and eats lunch on Eastern time, and the windows show the live weather. You can click anyone to say hi.
 
-- **TV:** https://timberjones.github.io (F, Enter / the remote's OK button, or a click on an empty spot for fullscreen)
+- **TV:** https://timberjones.github.io (click an empty spot for fullscreen; see [On the office TV](#on-the-office-tv))
 - **User page:** https://timberjones.github.io/u (walk your own character around the TV from your phone or computer)
+
+## On the office TV
+
+The office TV is an older Samsung running the page in its built-in browser.
+
+- **Fullscreen:** move the remote's pointer to an empty spot (not a person) and click. Click again to leave fullscreen. Enter (the remote's OK button) and F on a keyboard also toggle it.
+- **After an update**, add something new to the end of the address, like `timberjones.github.io/?v=4`, so the TV loads the new version instead of an old saved copy.
+- **If the page can't start**, it shows a red bar with the error and the browser's details instead of a blank screen. Send that text along when asking for a fix.
+- **If the browser keeps closing or the screensaver kicks in,** a streaming stick running a kiosk browser (for example Fully Kiosk Browser on a Fire TV Stick) keeps the page up full time.
 
 ## URL parameters
 
@@ -42,7 +51,7 @@ Add these to the TV page, for example `timberjones.github.io/?time=12:30&weather
 **User page**
 - `u?id=1234` opens the user page already signed in as that id
 
-**Keys on the TV page:** N night, D day, C back to the real clock, W cycle the weather, B someone says a line now, F or Enter (remote OK) fullscreen; clicking an empty spot also toggles it.
+**Keys on the TV page:** N night, D day, C back to the real clock, W cycle the weather, B someone says a line now, F or Enter (remote OK) fullscreen. Clicking an empty spot also toggles fullscreen; clicking a person makes them say hi.
 
 ## User page
 
@@ -51,6 +60,13 @@ Open `/u`, type your user id (or `1111`, or "I'm new here", to come in as someon
 ## Tech stack
 
 - **Static pages on GitHub Pages.** `gm-office.html` (the TV) and `gm-user.html` (the user page) are each a single self-contained HTML file using a plain canvas, with no build step or framework. `index.html` and `u.html` are short redirects. The user page reuses the TV's sprites and office layout by loading the code between the `@shared` markers in `gm-office.html`.
+- **Works on old TV browsers (about Chrome 51 / 2016 and newer).** The TV's built-in Samsung browser is years behind, and one unsupported feature leaves the screen blank. So `gm-office.html`:
+  - starts with a small plain-ES5 script that adds the newer functions the page uses when the browser lacks them (`Array.flatMap`, `String.padStart`, `Object.entries`, and `Intl.DateTimeFormat.formatToParts` for the Eastern clock);
+  - uses promises instead of `async`/`await`, which old browsers can't even read;
+  - shows startup errors on screen (the red bar above);
+  - calls the `webkit`-prefixed fullscreen functions when the standard ones are missing.
+
+  When changing the TV page, avoid `async`/`await`, `?.`, `??`, `catch {` without a variable, `{...obj}` object spread, and newer built-in functions unless you add a fallback in that first script. To check, pull the main `<script>` out of the page and run `npx esbuild page.js --target=chrome51`: it should finish without errors.
 - **Activity feed (Google Apps Script).** A Sheet-bound script pulls quote, order and delivery activity from Redash every 6 hours, adds the weather from OpenWeather, and serves it as public JSON with no emails in it. The TV turns it into speech bubbles and window weather.
 - **Live control (Cloudflare Worker + Durable Object).** The relay in [relay/](relay/) is how the user page moves a character on the TV in real time:
   - A Durable Object is a single, stateful instance of code that Cloudflare runs somewhere close to its users. We use exactly one, named `office`, as a chat room that every page connects to.
