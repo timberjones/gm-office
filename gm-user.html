@@ -307,13 +307,14 @@ function placeName(x, y, seat) {
   return 'Walking around the office';
 }
 let flashT = 0;
-function updateWhere() { if (me && performance.now() > flashT) $('where').textContent = placeName(me.tx, me.ty, me.seat); }
+function updateWhere() { if (me && !T.open && performance.now() > flashT) $('where').textContent = placeName(me.tx, me.ty, me.seat); }
 function flashWhere(t) { $('where').textContent = t; flashT = performance.now() + 1500; setTimeout(updateWhere, 1600); }
 // ---- your character, big
 function renderAvatar(t) {
   const c = $('avatar'), dpr = window.devicePixelRatio || 1, W = Math.round(c.clientWidth * dpr), H = Math.round(c.clientHeight * dpr);
   if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
   const g2 = c.getContext('2d'); g2.clearRect(0, 0, W, H); g2.imageSmoothingEnabled = false;
+  if (T.open) return;   // in the washroom (trivia): not in the office
   const F = me.frames, walking = me.q.length > 0;
   if (me.dog) {   // 11 x 7 art px: drawn bigger than a person so it fills the stage
     const f = F[me.dir + (walking && Math.floor(me.walkT * 10) % 2 ? 'B' : 'A')];
@@ -498,6 +499,7 @@ function bestLine() {
 function openTrivia() {
   if (T.open) return;
   T.open = true; held = []; document.querySelectorAll('.pad .on').forEach(b => b.classList.remove('on'));
+  $('where').textContent = 'In the washroom';
   $('trivia').classList.remove('hidden');
   const b = $('tBody'); b.innerHTML = '';
   b.append(el('p', null, 'You found the secret washroom trivia!'), el('p', null, 'Answer as many plant questions as you can in 30 seconds.'), el('p', 'tmuted', bestLine()));
@@ -507,6 +509,7 @@ function closeTrivia() {   // back out of the washroom: they reappear at its doo
   T.open = false; T.lock = false; clearInterval(T.timer);
   $('trivia').classList.add('hidden');
   me.dir = 'up'; send({ t: 'hide', on: false }); send({ t: 'step', x: me.tx, y: me.ty, dir: 'up', sit: false });
+  updateWhere();
 }
 async function startTrivia() {
   try { bank = bank || await (await fetch('trivia.json', { cache: 'no-cache' })).json(); }

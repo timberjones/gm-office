@@ -2462,10 +2462,7 @@ function drawTriviaBest_() {
   const c = mctx;
   c.save();
   c.textAlign = 'center'; c.textBaseline = 'top'; c.fillStyle = 'rgba(70,52,38,0.32)';
-  c.font = Math.round(u * 2.6) + 'px sans-serif'; c.fillText('PLANT TRIVIA', cx, top);
-  c.fillText('BEST TODAY', cx, top + u * 3.2);
-  c.font = 'bold ' + Math.round(u * 9) + 'px sans-serif'; c.fillText(String(t.n), cx, top + u * 7.5);
-  c.font = Math.round(u * 2.6) + 'px sans-serif'; c.fillText('#' + t.uid, cx, top + u * 18);
+  c.font = 'bold ' + Math.round(u * 9) + 'px sans-serif'; c.fillText(String(t.n), cx, top + u * 6);   // just the number (TJ)
   c.restore();
 }
 function updateAmbient(dt) {
