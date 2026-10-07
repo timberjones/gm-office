@@ -1011,6 +1011,8 @@ function openSeat_(w) {
   ok.sort((a, b) => (Math.abs(a.x - w.tx) + Math.abs(a.y - w.ty)) - (Math.abs(b.x - w.tx) + Math.abs(b.y - w.ty)));
   return ok[0] || null;
 }
+// During a townhall, people on side-facing chairs turn to face the left wall (chair and all); up/down chairs stay as they are.
+const turnedLeft_ = (w, s) => townhallNow_() && !PRESENTER_SPOTS[w.role] && s && (s.face === 'right' || s.face === 'left') && w.dir === 'left';
 function* watchTownhall(w, face) {   // still, now and then a glance up or down and back
   while (townhallNow_()) {
     yield rnd(4, 10);
@@ -1055,8 +1057,16 @@ function* attendTownhall(w) {
     if (seat.occ && seat.occ !== w) { yield 2; return; }   // someone beat them to it: try again
     sit(w, seat);
   }
-  w.pose = 'idle'; w.dir = 'left';
-  yield* watchTownhall(w, 'left');
+  const side = seat.face === 'right' || seat.face === 'left';
+  w.pose = 'idle'; w.dir = side ? 'left' : seat.face;   // up/down chairs (lunch table ends) stay as they are
+  while (townhallNow_()) {   // now and then: a glance back at their desk, or a few seconds of typing
+    yield rnd(4, 10);
+    if (!townhallNow_()) break;
+    if (rand() < 0.4) {
+      if (side && seat.face === 'right') { w.dir = 'right'; yield rnd(0.8, 1.6); w.dir = 'left'; }
+      else { w.pose = 'type'; yield rnd(1.5, 3); w.pose = 'idle'; }
+    }
+  }
   if (w.seated && w.sitAt !== w.home) standUp(w);   // a borrowed chair: back to their own seat after
 }
 function wantPresent(w) {
@@ -1882,9 +1892,10 @@ function cachedOps_(holder, fn) {
 }
 const CHAIR_CAPS = new Map();
 function drawChair(s) {   // chairs come in a few kinds: each is drawn once and cached
-  const key = [s.face, s.chair, s.kind, !!s.stool].join('|');
+  const face = s.occ && turnedLeft_(s.occ, s) ? 'left' : s.face;   // townhall: the chair turns with the person in it
+  const key = [face, s.chair, s.kind, !!s.stool].join('|');
   let cap = CHAIR_CAPS.get(key);
-  if (!cap) { cap = capture_(-3, -8, 14, 17, () => drawChairRaw_(s, 0, 0)); CHAIR_CAPS.set(key, cap); }
+  if (!cap) { const fs = Object.assign({}, s, { face }); cap = capture_(-3, -8, 14, 17, () => drawChairRaw_(fs, 0, 0)); CHAIR_CAPS.set(key, cap); }
   blitCap_(cap, -3, -8, 14, 17, s.x * C8 + (s.back || 0), s.y * C8);   // drawn at an offset (no save / translate / restore per chair)
 }
 function drawChairRaw_(s, x, y) {
@@ -2152,7 +2163,8 @@ function drawPerson(w) {
   let c, sy, view;
   if (w.seated) {
     const s = w.sitAt, busy = (w.pose === 'type' && typingNow(w)) || w.pose === 'eat';
-    const face = townhallNow_() && !PRESENTER_SPOTS[w.role] && ['left', 'up', 'down', 'right'].includes(w.dir) ? w.dir : s.face;   // townhall: turned toward the left wall
+    const face = turnedLeft_(w, s) ? 'left' : s.face;   // townhall: turned toward the left wall
+    if (face !== s.face) sx += 2;   // the left-facing sprite's body sits 2 px further left in its frame than the right-facing one
     const f = busy ? ((TIME * (w.pose === 'eat' ? 2 : 9) + w.i) | 0) % 2 : 0;
     if (face === 'right' || face === 'left') { c = F[(face === 'right' ? 'sitRight' : 'sitLeft') + (f ? 'B' : 'A')]; sy = Y - 7; view = face; sx += s.back || 0; }   // sit back from a widened desk
     else if (face === 'down') { c = F.sitDown; sy = Y - 3; view = 'down'; }
