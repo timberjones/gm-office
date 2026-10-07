@@ -2869,7 +2869,13 @@ function applyEnt_(o, e) {
   glideTo_(o, num_(e[2], -4000, GX * C8), num_(e[3], -64, GY * C8));
   o.present = !!e[0]; o.hidden = !!e[1];
   o.dir = FACES.includes(e[4]) ? e[4] : 'down'; o.pose = POSES.includes(e[5]) ? e[5] : 'stand';
-  o.seated = !!seat; o.sitAt = seat; if (seat) seat.occ = o;
+  if (seat && o.glide && !o.seated && (o.glide.x0 !== o.glide.x1 || o.glide.y0 !== o.glide.y1)) {   // just sat down on the leader, but still gliding to the chair: walk the
+    o.pendingSeat = seat; o.pendingPose = o.pose;   // last bit and sit when we get there (not sitting in mid-air)
+    o.seated = false; o.sitAt = null; o.pose = 'walk';
+  } else {
+    o.pendingSeat = null;
+    o.seated = !!seat; o.sitAt = seat; if (seat) seat.occ = o;
+  }
   o.headset = !!e[7]; o.bag = !!e[8];
   o.tx = Math.round(o.px / C8); o.ty = Math.round(o.py / C8);
 }
@@ -2936,7 +2942,10 @@ function followStep_(dt) {   // glide everyone toward the latest snapshot
     if (o.glide) {
       const gl = o.glide; gl.t = Math.min(1, gl.t + dt * 1000 / SNAP_MS);
       o.px = gl.x0 + (gl.x1 - gl.x0) * gl.t; o.py = gl.y0 + (gl.y1 - gl.y0) * gl.t;
-      if (gl.t >= 1) o.glide = null;
+      if (gl.t >= 1) {
+        o.glide = null;
+        if (o.pendingSeat) { o.seated = true; o.sitAt = o.pendingSeat; o.pendingSeat.occ = o; o.pose = o.pendingPose; o.pendingSeat = null; }   // reached the chair
+      }
     }
     if (o.pose === 'walk') o.walkT += dt;
   };
