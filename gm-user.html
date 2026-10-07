@@ -319,7 +319,7 @@ function renderAvatar(t) {
   const F = me.frames, walking = me.q.length > 0;
   if (me.dog) {   // 11 x 7 art px: drawn bigger than a person so it fills the stage
     const f = F[me.dir + (walking && Math.floor(me.walkT * 10) % 2 ? 'B' : 'A')];
-    const a = f.art || 1, fw = f.width / a, fh = f.height / a, S = Math.max(3, Math.floor(Math.min(W / 14, H / 16)));
+    const a = f.art || 1, fw = f.width / a, fh = f.height / a, S = Math.max(2, Math.floor(Math.min(W / 14, H / 16) / (me.clone ? 2 : 1)));
     const x = Math.round((W - fw * S) / 2), y = Math.round(H * 0.8 - fh * S) - (!walking && ((t / 700) | 0) % 2 ? S / 2 : 0);   // idle: a little pant
     g2.fillStyle = 'rgba(40,20,8,0.25)';
     g2.beginPath(); g2.ellipse(W / 2, H * 0.8, fw * S * 0.45, 1.6 * S, 0, 0, Math.PI * 2); g2.fill();
@@ -336,7 +336,7 @@ function renderAvatar(t) {
     f = F[me.dir + k];
   }
   const a = f.art || 1, fw = f.width / a, fh = f.height / a;      // art pixels
-  const S = Math.max(2, Math.floor(Math.min(W / 19, H / 24)));   // screen px per art pixel
+  const S = Math.max(2, Math.floor(Math.min(W / 19, H / 24) / (me.clone ? 2 : 1)));   // screen px per art pixel (a clone: Mini-Me, half size)
   const x = Math.round((W - fw * S) / 2), y = Math.round(H * 0.86 - fh * S) - (!walking && !me.seat && ((t / 900) | 0) % 2 ? S / 2 : 0);   // idle: a slow breath
   g2.fillStyle = 'rgba(40,20,8,0.25)';
   g2.beginPath(); g2.ellipse(W / 2 + S, H * 0.86 - S, 6 * S, 2.2 * S, 0, 0, Math.PI * 2); g2.fill();
@@ -467,7 +467,7 @@ function relayConnect() {
       me.clone = !!m.clone;
       if (me.clone && !me.started) {   // a clone comes in through the entrance
         Object.assign(me, { tx: 0, ty: 25, seat: null, dir: 'right', q: [] }); me.px = 0; me.py = 25 * C8;
-        $('who').textContent = 'User ' + me.uid + ' (a clone: this id is open somewhere else)';
+        $('who').textContent = 'User ' + me.uid + ' - already in the office, you must be an evil clone...';
         updateWhere(); startHello();
       }
       return;

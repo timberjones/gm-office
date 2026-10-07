@@ -261,6 +261,13 @@ function blit(c, x, y) {
   const s = c.lo && !((g === sceneCtx || g.sceneCache) && SS >= 2) ? c.lo : c, a = s.art || 1;
   g.drawImage(s, snap(x) - 1, snap(y) - 1, s.width / a, s.height / a);
 }
+// Half size, feet on the same spot: the 1x art drawn at 0.5, so on the 2x scene each art pixel is one crisp pixel.
+// Clones (the same id opened twice) are Mini-Me sized.
+function blitMini_(c, x, y) {
+  const s = c.lo || c, a = s.art || 1, w = s.width / a, h = s.height / a;
+  g.drawImage(s, snap(x) - 1 + w / 4, snap(y) - 1 + h / 2, w / 2, h / 2);
+}
+const isClone_ = uid => /c\d+$/.test(String(uid || ''));
 // 2x copy of packed pixels: plain doubling (square pixel corners) by default; ?round=1 = Scale2x / EPX,
 // which rounds every corner (TJ: rounded looked overdone)
 const ROUND = params.get('round') === '1';
@@ -1355,7 +1362,8 @@ function drawDog(d) {
   const X = snap(d.px), Y = snap(d.py), F = d.frames, f = d.pose === 'walk' && Math.floor(d.walkT * 10) % 2 ? 'B' : 'A';
   let sx = X - 1, sy = Y + 1;
   if (d.dir !== 'left' && d.dir !== 'right') { sx = X; sy = Y; }
-  if (!CLASSIC) groundShadow_(X + 4, Y + 7, 4);
+  if (!CLASSIC) groundShadow_(X + 4, Y + 7, d.mini ? 2 : 4);
+  if (d.mini) { blitMini_(F[d.dir + f], sx, sy); d.headX = sx + 5; d.headTop = sy + 5; return; }   // a clone of the 101 dog
   blit(F[d.dir + f], sx, sy);
   d.headX = sx + 5; d.headTop = sy + 2;
 }
@@ -2174,6 +2182,13 @@ function drawPerson(w) {
     if ((w.dir === 'left' || w.dir === 'right') && k === 'B') k = 'A';
     c = F[w.dir + k]; sy = Y - 8; view = w.dir;
   }
+  if (w.mini) {   // a clone: Mini-Me
+    if (!CLASSIC && !w.seated) groundShadow_(X + 4, Y + 8, 3);
+    blitMini_(c, sx, sy);
+    const hh = c.lo ? c.lo.height / (c.lo.art || 1) : c.height / (c.art || 1);
+    w.headX = sx + 6; w.headTop = sy + 1 + hh / 2;
+    return;
+  }
   if (!CLASSIC && !w.seated) groundShadow_(X + 4, Y + 8, 5);
   blit(c, sx, sy);
   w.headX = sx + 6; w.headTop = sy + 1;
@@ -2642,7 +2657,7 @@ function visitorFor_(uid) {
     workers.push(w);
     cos.push(w.co = new Co(() => life(w), w));
   }
-  Object.assign(w, { variants: [v], v, look, frames: v.frames, isDog: !!look.dog, talk: look.dog ? 0 : ROLES.staff.talk });   // dogs only woof
+  Object.assign(w, { variants: [v], v, look, frames: v.frames, isDog: !!look.dog, talk: look.dog ? 0 : ROLES.staff.talk, mini: isClone_(uid) });   // dogs only woof; clones are Mini-Me
   return w;
 }
 // Stop whatever they were doing and hand them to the relay.
@@ -2885,7 +2900,7 @@ function applySnap_(m) {
     const w = workers[i];
     if (w.visitor && e[10] && w.v.uid !== String(e[10])) {
       const uid = String(e[10]), look = lookFor_(uid, () => seededLook_(uid)), v = { uid, dogOwner: false, look, frames: framesFor_(look) };
-      Object.assign(w, { variants: [v], v, look, frames: v.frames, isDog: !!look.dog, talk: look.dog ? 0 : ROLES.staff.talk });
+      Object.assign(w, { variants: [v], v, look, frames: v.frames, isDog: !!look.dog, talk: look.dog ? 0 : ROLES.staff.talk, mini: isClone_(uid) });
     }
     const v = w.variants[e[9] | 0];
     if (v && v !== w.v) { w.v = v; w.look = v.look; w.frames = v.frames; }
