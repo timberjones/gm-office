@@ -223,8 +223,9 @@ function startAs(uid) {
   history.replaceState(null, '', '?id=' + uid + (keepQS() ? '&' + keepQS() : ''));
   const k = knownSeat(uid), home = k ? k[0] : null, look = startLook(uid);
   me = { uid, home, look, frames: framesFor_(look), dog: uid === DOG_ID, q: [], seat: null, dir: 'right', walkT: 0, lookTouched: false, lookFromRelay: false };
-  if (home) Object.assign(me, { tx: home.x, ty: home.y, seat: home, dir: home.face });   // known: you're at your desk (the TV walks you in if you weren't)
-  else Object.assign(me, { tx: 0, ty: 25 });                                              // new: you come in through the door
+  // Everyone starts at the entrance: if the office says your character is already in (a 'where' from the relay),
+  // you jump to wherever it is; if not, it just walks in the door and it's yours right away (no walk to your desk first).
+  Object.assign(me, { tx: 0, ty: 25, dir: 'right' });
   me.px = me.tx * C8; me.py = me.ty * C8;
   $('who').textContent = me.dog ? "Woof! You're the office dog" : (k ? 'User ' : 'New person ') + uid;
   $('sitBtn').setAttribute('aria-label', me.dog ? 'Bark' : 'Sit or stand');

@@ -2604,7 +2604,7 @@ function step(dt) {
   if (syncMode === 'follow') followStep_(dt);   // another screen runs the office; we show what it sends
   else {
     for (const c of cos) if (!(c.w && c.w.ctl)) c.tick();
-    for (const w of workers) if (w.ctl) drive_(w, dt);
+    for (const w of workers) if (w.ctl) { drive_(w, dt); cfoWatch_(w); }
   }
   for (const w of workers) if (w.bubble && (w.bubble.t -= dt) <= 0) w.bubble = null;
   for (const d of dogs) {
@@ -2876,7 +2876,7 @@ let okTexts = null, okFeed = null;
 function okText_(t) {   // only lines this page could have said itself, so a forged snapshot can't put words on the TV
   if (!okTexts || okFeed !== feed) {
     okFeed = feed;
-    const all = [].concat(CLICK_LINES, [ANGRY_LINE, WOOF], GREETINGS.morning, GREETINGS.bye, COURIER_LINES, WATER_LINES);
+    const all = [].concat(CLICK_LINES, [ANGRY_LINE, WOOF, CFO_LINE], GREETINGS.morning, GREETINGS.bye, COURIER_LINES, WATER_LINES);
     for (const k in ROLES) if (ROLES[k].lines) all.push(...ROLES[k].lines);
     if (feed) for (const e of feed.feed) if (Array.isArray(e.speech)) all.push(...e.speech);
     okTexts = new Set(all.concat(all.map(x => String(x).toUpperCase())));
@@ -3039,6 +3039,17 @@ cv.addEventListener('click', e => {
 // CLICKING ME", and clicks on them do nothing for 5 s. Runs on the leader, so every screen sees the same tantrum.
 const ANGRY_LINE = 'STOP CLICKING ME', CLICK_BURST = 5, CLICK_WINDOW = 10, ANGRY_SECS = 5;
 const WOOF = 'Woof!';
+// Someone walked in from gm-user.html wanders into the top half of the CFO's office: the CFO (if he's in) objects.
+// Once per visit, at most every 20 s per person.
+const CFO_LINE = "You shouldn't be here";
+function cfoWatch_(w) {
+  const o = OFFICES[0], inside = w.present && !w.hidden && w.tx >= o.x0 && w.tx <= o.x1 && w.ty >= 0 && w.ty <= 3;
+  if (inside && !w.inCfoTop && TIME - (w.cfoWarnT || -1e9) > 20) {
+    const cfo = workers.find(x => x.role === 'cfo');
+    if (cfo && cfo !== w && cfo.present && !cfo.hidden) { w.cfoWarnT = TIME; say_(cfo, CFO_LINE, 3.5, true); }
+  }
+  w.inCfoTop = inside;
+}
 function poke_(w) {
   if (dogs.includes(w) || w.isDog) { say_(w, WOOF, 2, true); return; }   // click a dog and it barks
   if (w.angryUntil > TIME) return;   // still cross: clicks do nothing
