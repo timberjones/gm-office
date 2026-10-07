@@ -663,7 +663,7 @@ const FLOOR = [], AISLE = [];
 for (let y = 0; y < GY; y++) for (let x = 6; x < GX; x++) if (!blocked[idx(x, y)] && !isSeat[idx(x, y)]) { FLOOR.push([x, y]); if (y >= 9 && y <= 20) AISLE.push([x, y]); }
 
 // ---------------------------------------------------------------- pathfinding (4-way BFS)
-function bfs(sx, sy, tx, ty) {
+function bfs(sx, sy, tx, ty, avoid) {   // avoid: optional Set of cell indexes to route around (people in the way)
   if (sx === tx && sy === ty) return [];
   if (sx < 0 || sy < 0 || sx >= GX || sy >= GY) return null;
   const start = idx(sx, sy), goal = idx(tx, ty), prev = new Int16Array(GX * GY).fill(-1), q = [start];
@@ -676,7 +676,7 @@ function bfs(sx, sy, tx, ty) {
       const nx = cx + dx, ny = cy + dy;
       if (nx < 0 || ny < 0 || nx >= GX || ny >= GY) continue;
       const n = idx(nx, ny);
-      if (prev[n] !== -1 || ((blocked[n] || isSeat[n]) && n !== goal)) continue;
+      if (prev[n] !== -1 || ((blocked[n] || isSeat[n] || (avoid && avoid.has(n))) && n !== goal)) continue;
       prev[n] = c; q.push(n);
     }
   }
@@ -703,11 +703,46 @@ class Co {
     else if (typeof r.value === 'function') this.until = r.value;
   }
 }
+// People don't walk through each other. Before each step a person checks the next cell: if someone stands there
+// (or is stepping into it) they wait; after a moment they route around; if there's no way around (two people face
+// to face in a narrow gap) they squeeze past after a few seconds, so nobody is ever stuck. Dogs and the roomba
+// slip past people.
+const isPerson_ = e => e === courier || e === waterGuy || (e.home && !dogs.includes(e));
+function personIn_(x, y, me) {   // someone else standing in, or stepping into, cell (x, y)
+  for (const o of workers.concat(courier, waterGuy)) {
+    if (o === me || !o.present || o.hidden || o.seated) continue;
+    if ((o.tx === x && o.ty === y) || (o.pose === 'walk' && o.nx === x && o.ny === y)) return o;   // a stale mark from an interrupted step doesn't count
+  }
+  return null;
+}
+function peopleCells_(me) {   // cells taken by other people standing around, to route around
+  const set = new Set();
+  for (const o of workers.concat(courier, waterGuy)) {
+    if (o === me || !o.present || o.hidden || o.seated || o.tx < 0) continue;
+    set.add(idx(o.tx, o.ty)); if (o.pose === 'walk' && o.nx != null) set.add(idx(o.nx, o.ny));
+  }
+  return set;
+}
 function* walkTo(e, tx, ty, speed = WALK) {
-  const path = bfs(e.tx, e.ty, tx, ty);
+  let path = bfs(e.tx, e.ty, tx, ty);
   if (!path) return false;
+  const person = isPerson_(e);
+  let waited = 0, rerouted = false;
   e.pose = 'walk';
-  for (const [nx, ny] of path) {
+  for (let i = 0; i < path.length; i++) {
+    const [nx, ny] = path[i];
+    if (person && personIn_(nx, ny, e)) {   // someone's in the way
+      e.pose = 'stand';
+      waited += DT;
+      if (waited > 0.6 && !rerouted) {      // try a way around them
+        rerouted = true;
+        const alt = bfs(e.tx, e.ty, tx, ty, peopleCells_(e));
+        if (alt && alt.length && alt.length <= path.length - i + 8) { path = alt; i = -1; waited = 0; e.pose = 'walk'; continue; }
+      }
+      if (waited < 4) { i--; yield 0; continue; }   // wait a bit (then, still stuck: squeeze past)
+    }
+    waited = 0; rerouted = false; e.pose = 'walk';
+    e.nx = nx; e.ny = ny;   // stepping into this cell: others treat it as taken
     e.dir = nx > e.tx ? 'right' : nx < e.tx ? 'left' : ny > e.ty ? 'down' : 'up';
     const gx = nx * C8, gy = ny * C8;
     for (;;) {
@@ -718,7 +753,7 @@ function* walkTo(e, tx, ty, speed = WALK) {
       e.walkT += DT;
       yield 0;
     }
-    e.tx = nx; e.ty = ny;
+    e.tx = nx; e.ty = ny; e.nx = e.ny = null;
   }
   e.pose = 'stand';
   return true;
