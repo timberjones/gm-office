@@ -2449,7 +2449,24 @@ function render() {
     mctx.globalCompositeOperation = 'source-over'; mctx.fillStyle = vig; mctx.fillRect(0, 0, cv.width, cv.height);
   }
   drawSecretArt_();   // the QR art, at whole screen pixels, after the grade (full contrast for phones)
+  drawTriviaBest_();
   drawSpeech();
+}
+// Secret plant trivia (played on gm-user.html by walking into the washroom): today's best score, written faintly on
+// the closet roof (left of the washroom) so it doesn't stand out.
+let triviaBest = null;   // { day, n, uid } from the relay
+function drawTriviaBest_() {
+  const t = triviaBest;
+  if (!t || t.day !== zoneDay().key) return;
+  const cx = (OX + (BLOCK.x0 + BLOCK.wall) / 2 * C8 + 2) * scale, top = (OY + BLOCK.y0 * C8 + 8) * scale, u = scale;
+  const c = mctx;
+  c.save();
+  c.textAlign = 'center'; c.textBaseline = 'top'; c.fillStyle = 'rgba(70,52,38,0.32)';
+  c.font = Math.round(u * 2.6) + 'px sans-serif'; c.fillText('PLANT TRIVIA', cx, top);
+  c.fillText('BEST TODAY', cx, top + u * 3.2);
+  c.font = 'bold ' + Math.round(u * 9) + 'px sans-serif'; c.fillText(String(t.n), cx, top + u * 7.5);
+  c.font = Math.round(u * 2.6) + 'px sans-serif'; c.fillText('#' + t.uid, cx, top + u * 18);
+  c.restore();
 }
 function updateAmbient(dt) {
   for (const c of clouds) { c.x += c.v * dt; if (c.x > GX * C8 + 4) { c.x = 30 - c.w - rnd(0, 30); c.y = rnd(-17, -11); } }
@@ -2591,7 +2608,7 @@ const relay = { ws: null, ok: false, wait: 1000 };
 function relayConnect_() {
   if (!RELAY_URL || typeof WebSocket === 'undefined' || relay.ws) return;
   let ws;
-  try { ws = new WebSocket(RELAY_URL + (RELAY_URL.includes('?') ? '&' : '?') + 'sync=1'); } catch (e) { return; }   // sync=1: we can lead or follow
+  try { ws = new WebSocket(RELAY_URL + (RELAY_URL.includes('?') ? '&' : '?') + 'sync=1&v=2'); } catch (e) { return; }   // sync=1: we can lead or follow; v=2: we understand trivia messages
   relay.ws = ws;
   ws.onopen = () => { relay.ok = true; relay.wait = 1000; };
   ws.onmessage = e => {
@@ -2613,7 +2630,9 @@ function onRelay_(m) {
   if (m.t === 'peers') { syncPeers = m.n | 0; if (syncMode === 'lead' && syncPeers) sendSnap_(); return; }
   if (m.t === 'snap') { if (syncMode === 'follow') applySnap_(m); return; }
   if (m.t === 'poke') { if (syncMode !== 'follow') { const w = whoAt_(m.i); if (w && w.present && !w.hidden) poke_(w); } return; }
+  if (m.t === 'trivia') { triviaBest = m; return; }
   if (m.t === 'state') {   // (re)connected: everyone's looks, and exactly these people are driving right now
+    if (m.trivia) triviaBest = m.trivia;
     for (const [uid, look] of Object.entries(m.looks || {})) applyLook_(uid, look);
     if (m.count) { liveCount = m.count; rosterNow_(); }
     if (m.snap && syncMode === 'follow') applySnap_(m.snap);
@@ -2626,6 +2645,7 @@ function onRelay_(m) {
   if (m.t === 'count') { liveCount = m; rosterNow_(); return; }
   if (m.t === 'look') { applyLook_(m.uid, m.look); return; }
   if (syncMode === 'follow') return;   // steps from gm-user.html: the leader moves them, and we get its snapshots
+  if (!['hello', 'step', 'hb', 'bye', 'bark'].includes(m.t)) return;   // anything else (a newer message type) isn't a step
   let hit = workerOf_(m.uid);
   if (m.t === 'bark') { if (hit && hit[0].isDog && hit[0].present) say_(hit[0], WOOF, 2, true); return; }   // the Woof button on 101's page
   if (m.t === 'bye') { if (hit) release_(hit[0]); return; }

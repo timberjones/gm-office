@@ -98,6 +98,24 @@
     .pad button { font-size: 1.8rem; border-radius: 16px; }
     .pad .sit { font-size: 0.95rem; }
   }
+  /* secret washroom trivia */
+  .trivia { position: fixed; inset: 0; background: rgba(20, 14, 10, 0.55); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 10; }
+  .tcard { width: 100%; max-width: 460px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25); }
+  .thead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-weight: 700; }
+  .thead .btn { padding: 4px 10px; }
+  .tcard p { margin: 0 0 10px; }
+  .tmuted { color: var(--muted); font-size: 0.9rem; }
+  .tbar { height: 8px; border-radius: 4px; background: var(--pad); overflow: hidden; margin-bottom: 6px; }
+  .tbar i { display: block; height: 100%; width: 100%; background: var(--accent); }
+  .tmeta { display: flex; justify-content: space-between; font-size: 0.85rem; color: var(--muted); margin-bottom: 10px; }
+  .tq { font-weight: 600; min-height: 3em; }
+  .topts { display: grid; gap: 8px; }
+  .topts button { text-align: left; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 10px; padding: 12px; font: inherit; cursor: pointer; min-height: 48px; }
+  .topts button.right { background: #22b573; border-color: #22b573; color: #fff; }
+  .topts button.wrong { background: #d9453b; border-color: #d9453b; color: #fff; }
+  .tbig { font-size: 3rem; font-weight: 800; text-align: center; margin: 4px 0 0 !important; }
+  .trow { display: flex; gap: 8px; }
+  .trow .btn { flex: 1; }
   .pad .up { grid-area: 1 / 2; } .pad .left { grid-area: 2 / 1; } .pad .sit { grid-area: 2 / 2; } .pad .right { grid-area: 2 / 3; } .pad .down { grid-area: 3 / 2; }
 </style>
 </head>
@@ -139,6 +157,12 @@
     <button class="sit" id="sitBtn" aria-label="Sit or stand">Sit</button>
     <button class="right" data-dir="right" aria-label="Right">▶</button>
     <button class="down" data-dir="down" aria-label="Down">▼</button>
+  </div>
+  <div class="trivia hidden" id="trivia" role="dialog" aria-label="Plant trivia">
+    <div class="tcard">
+      <div class="thead"><span>Plant trivia</span><button class="btn ghost" id="tClose" type="button" aria-label="Close">&#x2715;</button></div>
+      <div id="tBody"></div>
+    </div>
   </div>
   <div class="hint" id="hint">Tap or hold the arrows · keyboard: arrows / WASD, Space to sit</div>
 </main>
@@ -229,6 +253,10 @@ function unpress(dir) { held = held.filter(d => d !== dir); }
 function queueStep(dir) {
   if (me.q.length >= 2) return;   // taps can queue one step ahead, no more
   const [ax, ay] = me.q.length ? me.q[me.q.length - 1] : [me.tx, me.ty], nx = ax + DIRV[dir][0], ny = ay + DIRV[dir][1];
+  if (dir === 'up' && !me.q.length && me.tx === WC_DOOR[0] && me.ty === WC_DOOR[1]) {   // into the washroom: secret trivia
+    me.dir = 'up'; me.seat = null; send({ t: 'step', x: me.tx, y: me.ty, dir: 'up', sit: false });
+    openTrivia(); return;
+  }
   if (walkable(nx, ny)) { me.dir = dir; me.q.push([nx, ny]); send({ t: 'step', x: nx, y: ny, dir, sit: false }); }
   else if (me.dir !== dir || me.seat) {   // bumped into something: turn to face it (and get up, if sitting)
     me.dir = dir;
@@ -269,6 +297,7 @@ function placeName(x, y, seat) {
     if (me.home && seat === me.home) return 'At your desk';
     return { desk: 'At a desk', meet: 'In the meeting room', lunch: 'At the lunch table', bar: 'At the bar table' }[seat.kind] || 'Sitting';
   }
+  if (x === WC_DOOR[0] && y === WC_DOOR[1]) return 'At the washroom door';
   if (x <= 5) return 'At the entrance';
   if (y <= 7) return x >= 33 ? 'In the meeting room' : 'In an office';
   if (y >= 21 && x >= 27 && x <= 34) return 'In the kitchen';
@@ -420,7 +449,7 @@ function setStatus() {
 function relayConnect() {
   if (!me || relay.ws || relay.stop) return;
   let ws;
-  try { ws = new WebSocket(RELAY_URL + '?uid=' + me.uid); } catch (e) { return; }
+  try { ws = new WebSocket(RELAY_URL + '?uid=' + me.uid + '&v=2'); } catch (e) { return; }   // v=2: send us trivia messages
   relay.ws = ws; setStatus();
   ws.onopen = () => {
     relay.ok = true; relay.wait = 1000; setStatus();
@@ -430,7 +459,9 @@ function relayConnect() {
   ws.onmessage = e => {
     if (e.data === 'pong') return;
     let m; try { m = JSON.parse(e.data); } catch (er) { return; }
+    if (m.t === 'trivia') { todayBest = m; return; }
     if (m.t !== 'state' || !me) return;
+    if (m.trivia) todayBest = m.trivia;
     const saved = m.looks && m.looks[me.uid];
     if (saved && !me.lookTouched && !!saved.dog === me.dog) {
       me.look = me.dog ? Object.assign({}, saved) : Object.assign({ hat: null, beard: false, goatee: false, build: null, sex: 'm' }, saved);
@@ -452,10 +483,88 @@ document.addEventListener('visibilitychange', () => {
   else if (relay.stop) { relay.stop = false; relayConnect(); }
 });
 
+// ---- secret plant trivia: walk up into the washroom door. Answer as many questions as you can in 30 seconds;
+// the score goes to the relay, which keeps today's best, written faintly on the TV's closet roof.
+const WC_DOOR = [21, 20];   // the cell in front of the washroom door (gm-office.html SPOTS.wc)
+const ROUND_MS = 30000;
+let bank = null, todayBest = null;
+const T = { open: false, timer: 0, end: 0, score: 0, order: [], i: 0, lock: false };
+const shuf = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+function bestLine() {
+  return todayBest ? "Today's best: " + todayBest.n + ' (#' + todayBest.uid + ')' : 'No score yet today. Be the first!';
+}
+function openTrivia() {
+  if (T.open) return;
+  T.open = true; held = []; document.querySelectorAll('.pad .on').forEach(b => b.classList.remove('on'));
+  $('trivia').classList.remove('hidden');
+  const b = $('tBody'); b.innerHTML = '';
+  b.append(el('p', null, 'You found the secret washroom trivia!'), el('p', null, 'Answer as many plant questions as you can in 30 seconds.'), el('p', 'tmuted', bestLine()));
+  const go = el('button', 'btn', 'Start'); go.type = 'button'; go.onclick = startTrivia; b.append(go); go.focus();
+}
+function closeTrivia() {
+  T.open = false; T.lock = false; clearInterval(T.timer);
+  $('trivia').classList.add('hidden');
+}
+async function startTrivia() {
+  try { bank = bank || await (await fetch('trivia.json', { cache: 'no-cache' })).json(); }
+  catch (e) { $('tBody').textContent = "Couldn't load the questions. Try again in a moment."; return; }
+  T.order = shuf(bank.map((_, k) => k)); T.i = 0; T.score = 0; T.lock = false;
+  T.end = performance.now() + ROUND_MS;
+  showQ();
+  clearInterval(T.timer); T.timer = setInterval(tickTrivia, 100);
+}
+function tickTrivia() {
+  const left = Math.max(0, T.end - performance.now()), f = $('tFill'), l = $('tLeft');
+  if (f) f.style.width = (left / ROUND_MS * 100) + '%';
+  if (l) l.textContent = Math.ceil(left / 1000) + 's left';
+  if (left <= 0) finishTrivia();
+}
+function showQ() {
+  const q = bank[T.order[T.i % T.order.length]], b = $('tBody');
+  b.innerHTML = '';
+  const bar = el('div', 'tbar'); bar.append(el('i')); bar.firstChild.id = 'tFill';
+  const meta = el('div', 'tmeta'); const left = el('span', null, ''); left.id = 'tLeft'; const sc = el('span', null, T.score + ' right'); meta.append(left, sc);
+  const opts = el('div', 'topts');
+  shuf(q.a.map((t, k) => ({ t, ok: k === 0 }))).forEach((o, k) => {
+    const btn = el('button', null, (k + 1) + '. ' + o.t); btn.type = 'button'; btn.dataset.ok = o.ok ? '1' : '';
+    btn.onclick = () => answer(btn, o.ok); opts.append(btn);
+  });
+  b.append(bar, meta, el('p', 'tq', q.q), opts);
+  tickTrivia();
+}
+function answer(btn, ok) {
+  if (T.lock || !T.open || performance.now() >= T.end) return;
+  T.lock = true;
+  if (ok) { T.score++; btn.classList.add('right'); }
+  else { btn.classList.add('wrong'); document.querySelectorAll('#tBody .topts button').forEach(b => { if (b.dataset.ok) b.classList.add('right'); }); }
+  setTimeout(() => { if (!T.open) return; T.lock = false; T.i++; if (performance.now() < T.end) showQ(); }, ok ? 250 : 650);
+}
+function finishTrivia() {
+  clearInterval(T.timer);
+  if (!T.open) return;
+  T.lock = true;
+  const n = T.score, beat = n > 0 && (!todayBest || n > todayBest.n);
+  if (n > 0) send({ t: 'score', n });
+  if (beat) todayBest = { day: '', n, uid: me.uid };
+  const b = $('tBody'); b.innerHTML = '';
+  b.append(el('p', 'tbig', String(n)), el('p', null, n === 1 ? 'right answer in 30 seconds.' : 'right answers in 30 seconds.'),
+    el('p', 'tmuted', beat ? "That's today's best! It's up in the office now." : bestLine()));
+  const row = el('div', 'trow'), again = el('button', 'btn', 'Play again'), back = el('button', 'btn ghost', 'Back to the office');
+  again.type = back.type = 'button'; again.onclick = startTrivia; back.onclick = closeTrivia; row.append(again, back); b.append(row);
+}
+
 // ---- input: keyboard and the d-pad (tap = one step, hold = keep walking)
 const KEY_DIR = { arrowup: 'up', w: 'up', arrowdown: 'down', s: 'down', arrowleft: 'left', a: 'left', arrowright: 'right', d: 'right' };
 addEventListener('keydown', e => {
   if (!me || e.target.tagName === 'INPUT') return;
+  if (T.open) {   // the trivia card has the keyboard: 1-4 answer, Esc closes
+    const n = '1234'.indexOf(e.key);
+    if (n >= 0) { const b = document.querySelectorAll('#tBody .topts button')[n]; if (b) b.click(); }
+    if (e.key === 'Escape') closeTrivia();
+    if (KEY_DIR[e.key.toLowerCase()] || e.key === ' ') e.preventDefault();
+    return;
+  }
   const k = e.key.toLowerCase(), dir = KEY_DIR[k];
   if (dir || k === ' ') e.preventDefault();   // no page scrolling, and Space doesn't also press a focused button
   if (e.repeat) return;
@@ -475,6 +584,7 @@ for (const b of document.querySelectorAll('.pad [data-dir]')) {
   b.addEventListener('contextmenu', e => e.preventDefault());
 }
 $('sitBtn').addEventListener('click', sitOrStand);
+$('tClose').addEventListener('click', closeTrivia);
 $('idForm').addEventListener('submit', e => { e.preventDefault(); startAs($('idInput').value); });
 $('newBtn').addEventListener('click', () => startAs(newId()));
 $('againBtn').addEventListener('click', () => startAs(store.get('gmOfficeUid')));

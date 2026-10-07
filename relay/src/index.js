@@ -9,6 +9,9 @@
 //                  (pm.n) and the Eastern hour of the latest afternoon post (pm.h, about when that laptop left).
 //                  Everyone gets { t: 'count', day, n, pm }; pages use it as today's headcount (and wind the afternoon
 //                  down from pm to 6 pm), and fall back to the weekday guess when there's none for today.
+// Secret plant trivia (gm-user.html, in the washroom): a driver posts { t: 'score', n } after a 30 s round. We keep
+// today's best (Eastern date) and send { t: 'trivia', day, n, uid } to pages that connected with v=2 (older pages
+// would misread it), and include it in their 'state'.
 // Hibernation API: idle sockets cost nothing, and 'ping' -> 'pong' is answered without waking the object.
 // One office on every screen: the first viewer is the leader ({ t: 'role', lead: true }) and runs the office.
 // It sends { t: 'snap' } (who's where) while other viewers are watching ({ t: 'peers', n }); we pass it on and keep
@@ -70,7 +73,10 @@ export class Office extends DurableObject {
     if (new URL(req.url).pathname === '/count') return this.postCount_(req);
     const q = new URL(req.url).searchParams, uid = q.get('uid'), sync = !uid && q.get('sync') === '1';   // older pages don't sync
     const [client, server] = Object.values(new WebSocketPair());
-    this.ctx.acceptWebSocket(server, uid ? ['ctl', 'u' + uid] : sync ? ['view', 'sync'] : ['view']);
+    const tags = uid ? ['ctl', 'u' + uid] : sync ? ['view', 'sync'] : ['view'];
+    const v2 = (+q.get('v') || 1) >= 2;   // understands newer messages (trivia)
+    if (v2) tags.push('v2');
+    this.ctx.acceptWebSocket(server, tags);
     let lead = false;
     if (sync) {   // a screen: it leads if nobody does, otherwise the leader starts sending for it
       lead = !this.leader_();
@@ -81,9 +87,28 @@ export class Office extends DurableObject {
     for (const [k, v] of await this.ctx.storage.list({ prefix: 'look:' })) looks[k.slice(5)] = v;
     if (sync) server.send(JSON.stringify({ t: 'role', lead, peers: this.views_().length - 1 }));
     const snap = this.snap && Date.now() - this.snapAt < 5000 ? JSON.parse(this.snap) : null;
-    server.send(JSON.stringify({ t: 'state', online: this.online_(server), looks, count: await this.count_(), snap }));   // who's driving right now and where, and everyone's look
+    const state = { t: 'state', online: this.online_(server), looks, count: await this.count_(), snap };
+    if (v2) state.trivia = await this.trivia_();
+    server.send(JSON.stringify(state));   // who's driving right now and where, and everyone's look
     if (sync && !lead) this.tellPeers_();
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async trivia_() {   // today's best trivia score, or null
+    const t = await this.ctx.storage.get('trivia');
+    return t && t.day === eastern().day ? t : null;
+  }
+
+  async postScore_(ws, a, n) {
+    const now = Date.now();
+    if (!Number.isInteger(n) || n < 0 || n > 60 || now - (a.scoreAt || 0) < 20000) return;   // one round = 30 s
+    a.scoreAt = now; ws.serializeAttachment(a);
+    const old = await this.trivia_();
+    if (old && old.n >= n) return;
+    const t = { day: eastern().day, n, uid: a.uid, at: now };
+    await this.ctx.storage.put('trivia', t);
+    const s = JSON.stringify({ t: 'trivia', ...t });
+    for (const w of this.ctx.getWebSockets('v2')) try { w.send(s); } catch (e) {}
   }
 
   async count_() {   // today's headcount, or null
@@ -168,7 +193,8 @@ export class Office extends DurableObject {
     if (++a.n > MAX_PER_SEC) { ws.serializeAttachment(a); return; }
     let m;
     try { m = JSON.parse(raw); } catch (e) { return; }
-    if (!m || !['hello', 'step', 'hb', 'look', 'bark'].includes(m.t)) return;   // bark: the dog's Woof button
+    if (!m || !['hello', 'step', 'hb', 'look', 'bark', 'score'].includes(m.t)) return;   // bark: the dog's Woof button
+    if (m.t === 'score') { ws.serializeAttachment(a); return this.postScore_(ws, a, m.n); }   // trivia: not passed on as-is
     const out = { t: m.t, uid: a.uid };
     if (m.t === 'look') {
       const look = cleanLook(m.look, a.uid);
