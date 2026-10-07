@@ -2334,6 +2334,21 @@ function speechFor_(uid) {
   return e && Array.isArray(e.speech) ? e.speech.filter(Boolean) : [];
 }
 // Who speaks: someone in the office with their own lines (it's their turn at a shared seat), or anyone for "all" lines.
+// The Talk button on gm-user.html: one line for that character, by the usual rules: their own lines (work numbers and
+// their One-liners rows) first; else their group's (a role code like 'am', or a role's fixed lines); else the 'all'
+// lines if their role talks at all (interns, HR, product and the like don't); else nothing. At most every 2 s.
+function talkFor_(uid) {
+  const hit = workerOf_(uid), w = hit && hit[0];
+  if (!w || !w.present || w.hidden || w.isDog || TIME - (w.talkT || -1e9) < 2) return;
+  const base = baseUid_(uid), R0 = ROLES[w.role] || {};
+  let lines = speechFor_(base);
+  if (!lines.length) lines = speechFor_(w.role).concat(R0.lines || []);
+  if (!lines.length && w.talk > 0 && w.role !== 'product') lines = speechFor_('all');
+  if (!lines.length) return;
+  w.talkT = TIME;
+  let text = pick(lines); if (w.role === 'am') text = text.toUpperCase();
+  say_(w, text, 5 + text.length * 0.08, true);
+}
 function sayRandom() {
   const here = workers.filter(w => w.present && !w.hidden && w.px >= 0);
   const pools = [];
@@ -2746,6 +2761,7 @@ function onRelay_(m) {
   if (m.t === 'role') { setRole_(m.lead, m.peers); return; }
   if (m.t === 'peers') { syncPeers = m.n | 0; if (syncMode === 'lead' && syncPeers) sendSnap_(); return; }
   if (m.t === 'snap') { if (syncMode === 'follow') applySnap_(m); return; }
+  if (m.t === 'talk') { if (syncMode !== 'follow') talkFor_(m.uid); return; }   // the Talk button on gm-user.html
   if (m.t === 'whereq') {   // someone opened their id on gm-user.html: where is their character right now?
     if (syncMode === 'lead') {
       const hit = workerOf_(m.uid), w = hit && hit[0];

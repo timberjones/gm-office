@@ -92,11 +92,11 @@
     touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   .pad button { border: 1px solid var(--line); border-radius: 12px; background: var(--pad); font-size: 1.4rem; cursor: pointer; touch-action: none; display: flex; align-items: center; justify-content: center; }
   .pad button.on { background: var(--pad-press); color: var(--accent-ink); }
-  .pad .sit { font-size: 0.8rem; font-weight: 600; border-radius: 50%; }
+  .pad .sit, .pad .talk { font-size: 0.8rem; font-weight: 600; border-radius: 50%; }
   @media (max-width: 599px) {   /* phones: a big d-pad for thumbs */
     .pad { grid-template-columns: repeat(3, 76px); grid-template-rows: repeat(3, 76px); gap: 8px; margin-top: 16px; }
     .pad button { font-size: 1.8rem; border-radius: 16px; }
-    .pad .sit { font-size: 0.95rem; }
+    .pad .sit, .pad .talk { font-size: 0.95rem; }
   }
   /* secret washroom trivia */
   .trivia { position: fixed; inset: 0; background: rgba(20, 14, 10, 0.55); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 10; }
@@ -116,7 +116,7 @@
   .tbig { font-size: 3rem; font-weight: 800; text-align: center; margin: 4px 0 0 !important; }
   .trow { display: flex; gap: 8px; }
   .trow .btn { flex: 1; }
-  .pad .up { grid-area: 1 / 2; } .pad .left { grid-area: 2 / 1; } .pad .sit { grid-area: 2 / 2; } .pad .right { grid-area: 2 / 3; } .pad .down { grid-area: 3 / 2; }
+  .pad .up { grid-area: 1 / 2; } .pad .left { grid-area: 2 / 1; } .pad .sit { grid-area: 2 / 2; } .pad .right { grid-area: 2 / 3; } .pad .down { grid-area: 3 / 2; } .pad .talk { grid-area: 3 / 3; }
 </style>
 </head>
 <body>
@@ -155,6 +155,7 @@
     <button class="up" data-dir="up" aria-label="Up">▲</button>
     <button class="left" data-dir="left" aria-label="Left">◀</button>
     <button class="sit" id="sitBtn" aria-label="Sit or stand">Sit</button>
+    <button class="talk" id="talkBtn" aria-label="Say something">Talk</button>
     <button class="right" data-dir="right" aria-label="Right">▶</button>
     <button class="down" data-dir="down" aria-label="Down">▼</button>
   </div>
@@ -229,7 +230,8 @@ function startAs(uid) {
   me.px = me.tx * C8; me.py = me.ty * C8;
   $('who').textContent = me.dog ? "Woof! You're the office dog" : (k ? 'User ' : 'New person ') + uid;
   $('sitBtn').setAttribute('aria-label', me.dog ? 'Bark' : 'Sit or stand');
-  $('hint').textContent = me.dog ? 'Tap or hold the arrows · keyboard: arrows / WASD, Space to woof' : 'Tap or hold the arrows · keyboard: arrows / WASD, Space to sit';
+  $('talkBtn').classList.toggle('hidden', !!me.dog);   // the dog has its Woof button instead
+  $('hint').textContent = me.dog ? 'Tap or hold the arrows · keyboard: arrows / WASD, Space to woof' : 'Tap or hold the arrows · keyboard: arrows / WASD, Space to sit, T to talk';
   $('pick').classList.add('hidden'); $('play').classList.remove('hidden');
   buildLooksUI(); updateWhere();
   relay.stop = false; relayConnect();
@@ -265,6 +267,10 @@ function queueStep(dir) {
     me.dir = dir;
     if (!me.q.length) { me.seat = null; send({ t: 'step', x: me.tx, y: me.ty, dir, sit: false }); }
   }
+}
+function talk() {   // the office picks one of your lines (yours, else your group's) and your character says it
+  if (!me || me.dog) return;
+  if (send({ t: 'talk' })) flashWhere('Talking...');
 }
 function sitOrStand() {
   if (me && me.dog) { send({ t: 'bark' }); flashWhere('Woof!'); return; }   // dogs don't sit in chairs: they bark
@@ -616,6 +622,7 @@ addEventListener('keydown', e => {
   if (dir || k === ' ') e.preventDefault();   // no page scrolling, and Space doesn't also press a focused button
   if (e.repeat) return;
   if (dir) press(dir); else if (k === ' ') sitOrStand();   // Space = the Sit / Stand button
+  else if (k === 't') talk();   // T = the Talk button
 });
 addEventListener('keyup', e => {
   if (!me || e.target.tagName === 'INPUT') return;
@@ -631,6 +638,7 @@ for (const b of document.querySelectorAll('.pad [data-dir]')) {
   b.addEventListener('contextmenu', e => e.preventDefault());
 }
 $('sitBtn').addEventListener('click', sitOrStand);
+$('talkBtn').addEventListener('click', talk);
 $('tClose').addEventListener('click', closeTrivia);
 $('idForm').addEventListener('submit', e => { e.preventDefault(); startAs($('idInput').value); });
 $('newBtn').addEventListener('click', () => startAs(newId()));
