@@ -2567,7 +2567,7 @@ function takeOver_(w, v, row) {
 // Back to the routine: walk home and carry on (or head out, if it's not their day / hours).
 function release_(w) {
   if (!w.ctl) return;
-  w.ctl = null;
+  w.ctl = null; w.hidden = false;   // their page closed mid-trivia: back out of the washroom
   if (w.seated && w.sitAt !== w.home) standUp(w);
   w.co.restart(() => (function* () {
     if (!wantPresent(w)) yield* leave(w);   // not their day / hours (e.g. a Monday), or new: say bye and walk out now
@@ -2645,14 +2645,16 @@ function onRelay_(m) {
   if (m.t === 'count') { liveCount = m; rosterNow_(); return; }
   if (m.t === 'look') { applyLook_(m.uid, m.look); return; }
   if (syncMode === 'follow') return;   // steps from gm-user.html: the leader moves them, and we get its snapshots
-  if (!['hello', 'step', 'hb', 'bye', 'bark'].includes(m.t)) return;   // anything else (a newer message type) isn't a step
+  if (!['hello', 'step', 'hb', 'bye', 'bark', 'hide'].includes(m.t)) return;   // anything else (a newer message type) isn't a step
   let hit = workerOf_(m.uid);
   if (m.t === 'bark') { if (hit && hit[0].isDog && hit[0].present) say_(hit[0], WOOF, 2, true); return; }   // the Woof button on 101's page
+  if (m.t === 'hide') { if (hit && hit[0].ctl) { hit[0].hidden = !!m.on; if (!m.on) hit[0].dir = 'up'; } return; }   // in the washroom (trivia) / back out at its door
   if (m.t === 'bye') { if (hit) release_(hit[0]); return; }
   if (!hit) { const vw = visitorFor_(m.uid); if (!vw) return; hit = [vw, vw.v]; }
   const [w, v] = hit;
   const c = takeOver_(w, v, m.x === 0 ? m.y : null);
   c.seen = Date.now();
+  if (m.hidden != null) w.hidden = !!m.hidden;   // (re)connected while they're in the washroom
   if (m.t === 'hb') return;
   c.dir = m.dir || c.dir;
   const [ax, ay] = c.q.length ? c.q[c.q.length - 1] : [w.tx, w.ty];

@@ -253,8 +253,9 @@ function unpress(dir) { held = held.filter(d => d !== dir); }
 function queueStep(dir) {
   if (me.q.length >= 2) return;   // taps can queue one step ahead, no more
   const [ax, ay] = me.q.length ? me.q[me.q.length - 1] : [me.tx, me.ty], nx = ax + DIRV[dir][0], ny = ay + DIRV[dir][1];
-  if (dir === 'up' && !me.q.length && me.tx === WC_DOOR[0] && me.ty === WC_DOOR[1]) {   // into the washroom: secret trivia
-    me.dir = 'up'; me.seat = null; send({ t: 'step', x: me.tx, y: me.ty, dir: 'up', sit: false });
+  if (dir === 'down' && !me.q.length && me.tx === WC_DOOR[0] && me.ty === WC_DOOR[1]) {   // into the washroom (it's below the door): secret trivia
+    me.dir = 'down'; me.seat = null; send({ t: 'step', x: me.tx, y: me.ty, dir: 'down', sit: false });
+    send({ t: 'hide', on: true });   // gone from the office while they play
     openTrivia(); return;
   }
   if (walkable(nx, ny)) { me.dir = dir; me.q.push([nx, ny]); send({ t: 'step', x: nx, y: ny, dir, sit: false }); }
@@ -483,9 +484,9 @@ document.addEventListener('visibilitychange', () => {
   else if (relay.stop) { relay.stop = false; relayConnect(); }
 });
 
-// ---- secret plant trivia: walk up into the washroom door. Answer as many questions as you can in 30 seconds;
+// ---- secret plant trivia: stand at the washroom door and press down to go in. Answer as many questions as you can in 30 seconds;
 // the score goes to the relay, which keeps today's best, written faintly on the TV's closet roof.
-const WC_DOOR = [21, 20];   // the cell in front of the washroom door (gm-office.html SPOTS.wc)
+const WC_DOOR = [21, 20];   // the cell in front of the washroom door (gm-office.html SPOTS.wc); press DOWN there to go in
 const ROUND_MS = 30000;
 let bank = null, todayBest = null;
 const T = { open: false, timer: 0, end: 0, score: 0, order: [], i: 0, lock: false };
@@ -502,9 +503,10 @@ function openTrivia() {
   b.append(el('p', null, 'You found the secret washroom trivia!'), el('p', null, 'Answer as many plant questions as you can in 30 seconds.'), el('p', 'tmuted', bestLine()));
   const go = el('button', 'btn', 'Start'); go.type = 'button'; go.onclick = startTrivia; b.append(go); go.focus();
 }
-function closeTrivia() {
+function closeTrivia() {   // back out of the washroom: they reappear at its door
   T.open = false; T.lock = false; clearInterval(T.timer);
   $('trivia').classList.add('hidden');
+  me.dir = 'up'; send({ t: 'hide', on: false }); send({ t: 'step', x: me.tx, y: me.ty, dir: 'up', sit: false });
 }
 async function startTrivia() {
   try { bank = bank || await (await fetch('trivia.json', { cache: 'no-cache' })).json(); }

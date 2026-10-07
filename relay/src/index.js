@@ -193,8 +193,14 @@ export class Office extends DurableObject {
     if (++a.n > MAX_PER_SEC) { ws.serializeAttachment(a); return; }
     let m;
     try { m = JSON.parse(raw); } catch (e) { return; }
-    if (!m || !['hello', 'step', 'hb', 'look', 'bark', 'score'].includes(m.t)) return;   // bark: the dog's Woof button
+    if (!m || !['hello', 'step', 'hb', 'look', 'bark', 'score', 'hide'].includes(m.t)) return;   // bark: the dog's Woof button
     if (m.t === 'score') { ws.serializeAttachment(a); return this.postScore_(ws, a, m.n); }   // trivia: not passed on as-is
+    if (m.t === 'hide') {   // gone into the washroom (trivia) or back out: only pages that understand it (v2) hear it
+      a.last = Object.assign({}, a.last || {}, { hidden: !!m.on }); ws.serializeAttachment(a);
+      const s = JSON.stringify({ t: 'hide', uid: a.uid, on: !!m.on });
+      for (const w of this.ctx.getWebSockets('v2')) if (w !== ws) try { w.send(s); } catch (e) {}
+      return;
+    }
     const out = { t: m.t, uid: a.uid };
     if (m.t === 'look') {
       const look = cleanLook(m.look, a.uid);
@@ -205,7 +211,7 @@ export class Office extends DurableObject {
       const x = m.x | 0, y = m.y | 0;
       if (x < 0 || y < 0 || x >= GX || y >= GY) return;
       Object.assign(out, { x, y, dir: DIRS.includes(m.dir) ? m.dir : 'down', sit: !!m.sit });
-      a.last = { x, y, dir: out.dir, sit: out.sit };
+      a.last = { x, y, dir: out.dir, sit: out.sit, hidden: !!(a.last && a.last.hidden) };
     }
     ws.serializeAttachment(a);
     this.broadcast_(ws, out);
