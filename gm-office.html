@@ -3043,9 +3043,10 @@ const WOOF = 'Woof!';
 // Someone walked in from gm-user.html wanders into the top half of the CFO's office: the CFO (if he's in) objects.
 // Once per visit, at most every 20 s per person.
 const CFO_LINE = "You shouldn't be here";
-// Lines for a place: One-liners rows with User ID '<id>@coffee', '<id>@water' or '<id>@wc' (e.g. 2155@coffee) are
-// said now and then when that person stands at the coffee machine, the water cooler, or comes out of the washroom,
-// whether the office or a person on gm-user.html is walking them (clones too). At most every 45 s each.
+// 2155's office-mess grumbles: One-liners rows with User ID '2155@coffee', '2155@water' or '2155@wc' are said now and
+// then when he stops at the coffee machine or the water cooler, or comes out of the washroom, whether the office or a
+// person on gm-user.html is walking him (clones too). At most every 45 s. Only 2155 does this (TJ).
+const PLACE_LINE_IDS = ['2155'];
 const PLACE_CELLS = {};
 ['coffee', 'water', 'wc'].forEach(k => SPOTS[k].spots.forEach(p => { PLACE_CELLS[p.x + ',' + p.y] = k; }));
 function placeWatch_(w) {
@@ -3055,7 +3056,7 @@ function placeWatch_(w) {
   const place = at && (w.pose !== 'walk' || outOfWc) ? at : null;   // stopped there (not walking past), or just out of the washroom
   const arrived = place && (place !== w.lastPlace || outOfWc);
   w.lastPlace = place;
-  if (!arrived || !w.v || !w.v.uid || TIME - (w.placeT || -1e9) < 45) return;
+  if (!arrived || !w.v || !w.v.uid || !PLACE_LINE_IDS.includes(baseUid_(w.v.uid)) || TIME - (w.placeT || -1e9) < 45) return;
   if (place === 'wc' && !outOfWc && !w.ctl) return;   // the office walks people straight in: they grumble on the way out
   const lines = speechFor_(baseUid_(w.v.uid) + '@' + place);
   if (!lines.length || rand() > 0.6) return;   // now and then, not every time
