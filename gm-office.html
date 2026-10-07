@@ -3056,11 +3056,15 @@ function placeWatch_(w) {
   const place = at && (w.pose !== 'walk' || outOfWc) ? at : null;   // stopped there (not walking past), or just out of the washroom
   const arrived = place && (place !== w.lastPlace || outOfWc);
   w.lastPlace = place;
-  if (!arrived || !w.v || !w.v.uid || !PLACE_LINE_IDS.includes(baseUid_(w.v.uid)) || TIME - (w.placeT || -1e9) < 45) return;
+  if (!arrived || !w.v || !w.v.uid || !PLACE_LINE_IDS.includes(baseUid_(w.v.uid))) return;
   if (place === 'wc' && !outOfWc && !w.ctl) return;   // the office walks people straight in: they grumble on the way out
+  // someone walking him (gm-user.html): every time he stops at a spot (8 s guard per spot); the office walking him:
+  // now and then (60%, 45 s guard per spot)
+  const t = w.placeT || (w.placeT = {}), wait = w.ctl ? 8 : 45;
+  if (TIME - (t[place] || -1e9) < wait) return;
   const lines = speechFor_(baseUid_(w.v.uid) + '@' + place);
-  if (!lines.length || rand() > 0.6) return;   // now and then, not every time
-  w.placeT = TIME;
+  if (!lines.length || (!w.ctl && rand() > 0.6)) return;
+  t[place] = TIME;
   let text = pick(lines); if (w.role === 'am') text = text.toUpperCase();
   say_(w, text, 4, true);
 }

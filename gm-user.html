@@ -584,6 +584,23 @@ function finishTrivia() {
   again.type = back.type = 'button'; again.onclick = startTrivia; back.onclick = closeTrivia; row.append(again, back); b.append(row);
 }
 
+// ---- stay up to date: phones keep this tab open for days, so when you come back to it (and every 5 minutes) we ask
+// GitHub Pages for this page's ETag and reload if a new version was published (keeping your id; never mid-trivia)
+const pageTime = Date.parse(document.lastModified) || Date.now();   // when the copy we're running was published
+function checkForUpdate() {
+  if (location.protocol === 'file:' || T.open) return;
+  fetch(location.pathname + '?check=' + Date.now(), { method: 'HEAD', cache: 'no-store' })
+    .then(r => r.ok ? Date.parse(r.headers.get('last-modified') || '') : NaN)
+    .then(t => {
+      if (!(t > pageTime + 1000) || T.open) return;   // the server has a newer one than ours
+      const q = new URLSearchParams(location.search); q.set('v', Date.now());   // a fresh address, so the browser can't hand back its old copy
+      location.replace(location.pathname + '?' + q.toString());
+    }).catch(() => {});
+}
+checkForUpdate();
+setInterval(checkForUpdate, 5 * 60 * 1000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkForUpdate(); });
+
 // ---- input: keyboard and the d-pad (tap = one step, hold = keep walking)
 const KEY_DIR = { arrowup: 'up', w: 'up', arrowdown: 'down', s: 'down', arrowleft: 'left', a: 'left', arrowright: 'right', d: 'right' };
 addEventListener('keydown', e => {
