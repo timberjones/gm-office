@@ -31,6 +31,7 @@ Add these to the TV page, for example `timberjones.github.io/?time=12:30&weather
 - `?weather=rain` forces `sun`, `cloud`, `rain` or `snow` (default: live Montreal weather from the feed)
 - `?dogs=1` brings the poodles in right away (they're only around 9:00-16:30)
 - `?delivery=1` sends a food courier in right away
+- `?townhall=1` shows a company townhall now (scheduled ones are in `TOWNHALLS` in gm-office.html, e.g. Oct 8 3:30-5 pm): everyone stays at their desk turned toward the left wall, the left wall desk and small offices empty out, the CEO, COO and CFO stand by the left wall facing everyone, and nobody talks
 - `?water=1` sends the water delivery in right away (otherwise it comes at random, 8:30-16:30, not every day)
 - `?seed=N` fixes the randomness so the day plays out the same way each time
 

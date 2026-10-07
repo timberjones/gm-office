@@ -977,7 +977,90 @@ function windDown_(pm) {
   if (me) me.out = Math.min(me.out0, at);
 }
 pickRoster();
+// ---------------------------------------------------------------- townhalls
+// Company townhalls (Eastern time). Everyone stays at their desk or chair, turned to face the left wall; the CEO, COO
+// and CFO stand by the left wall desk (emptied, like the small offices: those people sit elsewhere or stand) facing them. No speech bubbles, no meetings or deliveries, nobody leaves early;
+// people just stand and watch, shifting a little now and then. ?townhall=1 shows one now.
+const TOWNHALLS = [{ day: '2026-10-8', from: 15.5, to: 17 }];
+const TOWNHALL_PARAM = params.get('townhall') === '1';
+function townhallNow_() {
+  if (TOWNHALL_PARAM) return true;
+  const key = zoneDay().key, h = world.hour;
+  return TOWNHALLS.some(t => t.day === key && h >= t.from && h < t.to);
+}
+const PRESENTER_SPOTS = { ceo: [9, 11], coo: [9, 13], cfo: [9, 15] };   // by the (emptied) left wall desk, facing right
+// seats nobody uses during a townhall: the small offices / conference room (y < 9) and the left wall desk (x <= 8)
+const offLimits_ = x => x.y < 9 || x.x <= 8;
+let townhallSpots = null;
+const thTaken = new Map();   // spot index -> worker
+function townhallSpot_(w) {
+  if (PRESENTER_SPOTS[w.role]) { const [x, y] = PRESENTER_SPOTS[w.role]; return { x, y, face: 'right' }; }
+  if (!townhallSpots) {   // open floor right of the presenters, spread out, nearest the front first
+    townhallSpots = FLOOR.filter(([x, y]) => x >= 11 && y >= 9 && y <= 19 && x % 2 === 1 && y % 2 === 0 && !isSeat[idx(x, y)])   // one per 2x2 cells (sprites are wider than a cell)
+      .sort((a, b) => (a[0] - b[0]) || (Math.abs(a[1] - 14) - Math.abs(b[1] - 14)))
+      .map(([x, y]) => ({ x, y, face: 'left' }));
+  }
+  for (const [k, o] of thTaken) if (o === w) return townhallSpots[k];
+  for (let k = 0; k < townhallSpots.length; k++) if (!thTaken.has(k)) { thTaken.set(k, w); return townhallSpots[k]; }
+  return null;
+}
+// A free chair in the open space for someone whose seat is in a small office or the conference room.
+function openSeat_(w) {
+  const ok = SEATS.filter(x => !offLimits_(x) && (x.kind === 'desk' || x.kind === 'lunch' || x.kind === 'bar') && !x.occ
+    && !(x.owner && x.owner !== w && (x.owner.today || x.owner.present)));
+  ok.sort((a, b) => (Math.abs(a.x - w.tx) + Math.abs(a.y - w.ty)) - (Math.abs(b.x - w.tx) + Math.abs(b.y - w.ty)));
+  return ok[0] || null;
+}
+function* watchTownhall(w, face) {   // still, now and then a glance up or down and back
+  while (townhallNow_()) {
+    yield rnd(4, 10);
+    if (!townhallNow_()) break;
+    if (rand() < 0.4) { w.dir = pick(['up', 'down']); yield rnd(0.6, 1.4); w.dir = face; }
+  }
+}
+function* attendTownhall(w) {
+  w.headset = false;
+  if (PRESENTER_SPOTS[w.role]) {   // the CEO, COO and CFO: standing by the left wall, facing everyone
+    const spot = townhallSpot_(w);
+    standUp(w);
+    if (TIME < 5) Object.assign(w, { px: spot.x * C8, py: spot.y * C8, tx: spot.x, ty: spot.y });   // page just opened: already there
+    else yield* walkTo(w, spot.x, spot.y);
+    w.pose = 'stand'; w.dir = 'right';
+    yield* watchTownhall(w, 'right');
+    w.pose = 'stand';
+    return;
+  }
+  if (w.home.kind === 'stand') {   // no seat (packed day): stand where they are, facing the front
+    if (!(w.tx === w.home.x && w.ty === w.home.y)) yield* goHome(w);
+    w.pose = 'stand'; w.dir = 'left';
+    yield* watchTownhall(w, 'left');
+    return;
+  }
+  // everyone else stays at their desk / chair, turned to face the left wall; the small offices, the conference room and
+  // the left wall desk (account managers) empty out: those people take a free chair elsewhere, or stand
+  let seat = !offLimits_(w.home) ? w.home : (w.seated && w.sitAt && !offLimits_(w.sitAt) ? w.sitAt : openSeat_(w));
+  if (!seat) {   // nowhere to sit: stand in the open space instead
+    const spot = townhallSpot_(w);
+    standUp(w);
+    if (spot) yield* walkTo(w, spot.x, spot.y);
+    w.pose = 'stand'; w.dir = 'left';
+    yield* watchTownhall(w, 'left');
+    for (const [k, o] of thTaken) if (o === w) thTaken.delete(k);
+    return;
+  }
+  if (!(w.seated && w.sitAt === seat)) {
+    standUp(w);
+    if (TIME < 5) Object.assign(w, { px: seat.x * C8, py: seat.y * C8, tx: seat.x, ty: seat.y });
+    else if (!(yield* walkTo(w, seat.x, seat.y))) { yield 2; return; }
+    if (seat.occ && seat.occ !== w) { yield 2; return; }   // someone beat them to it: try again
+    sit(w, seat);
+  }
+  w.pose = 'idle'; w.dir = 'left';
+  yield* watchTownhall(w, 'left');
+  if (w.seated && w.sitAt !== w.home) standUp(w);   // a borrowed chair: back to their own seat after
+}
 function wantPresent(w) {
+  if (w.present && townhallNow_()) return true;   // nobody heads home in the middle of a townhall
   const h = world.hour;
   if (!w.today) return false;
   if (h < w.in || h >= w.out) return false;
@@ -995,7 +1078,7 @@ function standUp(w) {
   w.seated = false; if (w.sitAt) w.sitAt.occ = null; w.sitAt = null; w.pose = 'stand'; w.headset = false;
 }
 const atDesk = w => w.seated && w.sitAt === w.home;
-function* sitFor(w, t) { while ((t > 0 || w.held) && !(w.summon && !w.held) && !w.fetch) { t -= DT; yield 0; } }
+function* sitFor(w, t) { while ((t > 0 || w.held) && !(w.summon && !w.held) && !w.fetch && !(w.present && !w.hidden && townhallNow_())) { t -= DT; yield 0; } }
 function* goHome(w) { yield* walkTo(w, w.home.x, w.home.y); placeAtHome_(w); }
 function placeAtHome_(w) {   // sit at their seat, or (no seat: townhall overflow) just stand there
   if (w.home.kind !== 'stand') { sit(w, w.home); return; }
@@ -1007,6 +1090,7 @@ function* life(w) {
   for (;;) {
     if (!wantPresent(w)) { if (w.present) yield* leave(w); yield 2; continue; }
     if (!w.present) yield* arrive(w);
+    if (townhallNow_()) { yield* attendTownhall(w); if (!atDesk(w)) yield* goHome(w); continue; }   // then back to their desk
     if (w.held) yield () => !w.held;
     if (w.summon) { yield* attendMeeting(w); continue; }
     if (w.fetch) { yield* fetchDelivery(w); continue; }   // the food courier is at the door
@@ -1163,7 +1247,7 @@ function* lunchAtTable(w) {
 // meetings in the glass room top-right
 let meeting = null;
 function* startMeeting(w) {
-  if (meeting || MEET_SEATS.some(x => x.owner && x.owner.present)) { yield* sitFor(w, 8); return; }   // townhall: people are working in there
+  if (meeting || townhallNow_() || MEET_SEATS.some(x => x.owner && x.owner.present)) { yield* sitFor(w, 8); return; }   // townhall: people are working in there
   const cands = shuffle(workers.filter(o => o !== w && o.present && atDesk(o) && o.pose === 'type' && !o.held && !o.summon && !o.ctl && o.acts !== DESKBOUND && o.role !== 'hr'));   // execs and HR aren't pulled into meetings
   if (!cands.length) { yield* sitFor(w, 8); return; }
   const members = [w, ...cands.slice(0, irnd(1, Math.min(MEET_SEATS.length - 1, 5, cands.length)))];
@@ -1278,7 +1362,7 @@ function* courierLife() {
   yield rnd(5, 30);
   for (;;) {
     const h = world.hour, anyone = workers.some(w => w.present && w.px >= 0);
-    if (courierPending || (h >= 11 && h < 14 && anyone && chance(0.5))) {
+    if (!townhallNow_() && (courierPending || (h >= 11 && h < 14 && anyone && chance(0.5)))) {
       courierPending = false;
       yield* courierVisit();
       yield rnd(1200, 3000);   // 20-50 min until the next one could come
@@ -1352,7 +1436,7 @@ function* waterLife() {
   yield rnd(5, 30);
   for (;;) {
     const h = world.hour, anyone = workers.some(w => w.present && w.px >= 0);
-    if (waterPending || (h >= 8.5 && h < 16.5 && anyone && chance(0.15))) {
+    if (!townhallNow_() && (waterPending || (h >= 8.5 && h < 16.5 && anyone && chance(0.15)))) {
       waterPending = false;
       yield* waterVisit();
       yield rnd(7200, 14400);   // 2-4 hours before the next one could come
@@ -2068,9 +2152,10 @@ function drawPerson(w) {
   let c, sy, view;
   if (w.seated) {
     const s = w.sitAt, busy = (w.pose === 'type' && typingNow(w)) || w.pose === 'eat';
+    const face = townhallNow_() && !PRESENTER_SPOTS[w.role] && ['left', 'up', 'down', 'right'].includes(w.dir) ? w.dir : s.face;   // townhall: turned toward the left wall
     const f = busy ? ((TIME * (w.pose === 'eat' ? 2 : 9) + w.i) | 0) % 2 : 0;
-    if (s.face === 'right' || s.face === 'left') { c = F[(s.face === 'right' ? 'sitRight' : 'sitLeft') + (f ? 'B' : 'A')]; sy = Y - 7; view = s.face; sx += s.back || 0; }   // sit back from a widened desk
-    else if (s.face === 'down') { c = F.sitDown; sy = Y - 3; view = 'down'; }
+    if (face === 'right' || face === 'left') { c = F[(face === 'right' ? 'sitRight' : 'sitLeft') + (f ? 'B' : 'A')]; sy = Y - 7; view = face; sx += s.back || 0; }   // sit back from a widened desk
+    else if (face === 'down') { c = F.sitDown; sy = Y - 3; view = 'down'; }
     else { c = f ? F.sitUpB : F.sitUpA; sy = Y - 5; view = 'up'; }
   } else {
     let k = w.pose === 'walk' ? ['', 'A', '', 'B'][Math.floor(w.walkT * 7) % 4] : '';
@@ -2196,6 +2281,7 @@ const MAX_BUBBLES = 4;
 let speeches = [], chatT = rnd(10, 30), lastText = '';
 const speakingNow_ = w => speeches.find(s => s.w === w);
 function say_(w, text, life, greet) {
+  if (townhallNow_()) return;   // everyone's listening: no speech bubbles during a townhall
   w.bubble = null;
   speeches = speeches.filter(s => s.w !== w);
   if (speeches.length >= MAX_BUBBLES) speeches.shift();
