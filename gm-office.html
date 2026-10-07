@@ -2605,6 +2605,7 @@ function step(dt) {
   else {
     for (const c of cos) if (!(c.w && c.w.ctl)) c.tick();
     for (const w of workers) if (w.ctl) { drive_(w, dt); cfoWatch_(w); }
+    for (const w of workers) placeWatch_(w);
   }
   for (const w of workers) if (w.bubble && (w.bubble.t -= dt) <= 0) w.bubble = null;
   for (const d of dogs) {
@@ -3042,6 +3043,26 @@ const WOOF = 'Woof!';
 // Someone walked in from gm-user.html wanders into the top half of the CFO's office: the CFO (if he's in) objects.
 // Once per visit, at most every 20 s per person.
 const CFO_LINE = "You shouldn't be here";
+// Lines for a place: One-liners rows with User ID '<id>@coffee', '<id>@water' or '<id>@wc' (e.g. 2155@coffee) are
+// said now and then when that person stands at the coffee machine, the water cooler, or comes out of the washroom,
+// whether the office or a person on gm-user.html is walking them (clones too). At most every 45 s each.
+const PLACE_CELLS = {};
+['coffee', 'water', 'wc'].forEach(k => SPOTS[k].spots.forEach(p => { PLACE_CELLS[p.x + ',' + p.y] = k; }));
+function placeWatch_(w) {
+  const outOfWc = w.wasHidden && !w.hidden;
+  w.wasHidden = !!w.hidden;
+  const at = w.present && !w.hidden && w.tx >= 0 ? PLACE_CELLS[w.tx + ',' + w.ty] || null : null;
+  const place = at && (w.pose !== 'walk' || outOfWc) ? at : null;   // stopped there (not walking past), or just out of the washroom
+  const arrived = place && (place !== w.lastPlace || outOfWc);
+  w.lastPlace = place;
+  if (!arrived || !w.v || !w.v.uid || TIME - (w.placeT || -1e9) < 45) return;
+  if (place === 'wc' && !outOfWc && !w.ctl) return;   // the office walks people straight in: they grumble on the way out
+  const lines = speechFor_(baseUid_(w.v.uid) + '@' + place);
+  if (!lines.length || rand() > 0.6) return;   // now and then, not every time
+  w.placeT = TIME;
+  let text = pick(lines); if (w.role === 'am') text = text.toUpperCase();
+  say_(w, text, 4, true);
+}
 function cfoWatch_(w) {
   const o = OFFICES[0], inside = w.present && !w.hidden && w.tx >= o.x0 && w.tx <= o.x1 && w.ty >= 0 && w.ty <= 3;
   if (inside && !w.inCfoTop && TIME - (w.cfoWarnT || -1e9) > 20) {
