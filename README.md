@@ -42,7 +42,8 @@ Add these to the TV page, for example `timberjones.github.io/?time=12:30&weather
 
 **Look and performance**
 - `?scale=4` forces the pixel scale (default: as big as fits the screen)
-- `?fps=30` sets the frame rate (default 60; lower it for a weak TV)
+- `?fps=30` sets the frame rate (default 60, or 30 on TV browsers)
+- `?debug=1` shows frames per second and milliseconds per frame in the corner (to see how a TV copes)
 - `?lofi=0` turns off the warm tint and vignette
 - `?hd=0` uses plain 1x sprites, without the HD detail or outlines
 - `?ss=2` sets the scene's supersampling level

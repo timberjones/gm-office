@@ -85,7 +85,9 @@ const params = new URLSearchParams(location.search);
 const PEOPLE = params.has('people') ? Math.max(0, parseInt(params.get('people')) || 0) : null;   // override today's headcount
 const TZ = params.get('tz') || 'America/Toronto';
 const LOFI = params.get('lofi') !== '0';
-const FPS = Math.max(15, Math.min(60, parseInt(params.get('fps')) || 60));   // 60 fps for smooth half-pixel motion (?fps=30 for a weak TV)
+// 60 fps for smooth half-pixel motion; TV browsers (weak CPUs) get 30 by default. ?fps= overrides either way.
+const IS_TV = /SMART-TV|SmartTV|Tizen|Web0S|WebOS|NetCast|HbbTV|BRAVIA|AFT[A-Z]|CrKey|Roku|Viera|Philips|Hisense|VIDAA/i.test(navigator.userAgent || '');
+const FPS = Math.max(15, Math.min(60, parseInt(params.get('fps')) || (IS_TV ? 30 : 60)));
 const C8 = 8, GX = 48, GY = 28;          // 8px grid cells; x 0-5 is the entrance corridor, x 6-47 the office
 const WALK = 30;                          // px per second
 const OUT = params.get('style') === 'classic' ? '#1a1c3a' : '#33251f';   // outline: warm dark brown (cozy style); classic = navy
@@ -202,7 +204,7 @@ let g = null;
 // SS = supersampling: the scene canvas runs at SS x the art resolution, so moving things can sit on half pixels
 // (smoother motion, smoother light) while the art itself stays the same chunky pixels.
 let SS = 1, sceneCtx = null;   // sceneCtx = the supersampled scene context (other canvases stay whole-pixel)
-const snap = v => g === sceneCtx ? Math.round(v * SS) / SS : Math.round(v);
+const snap = v => g === sceneCtx || g.sceneCache ? Math.round(v * SS) / SS : Math.round(v);
 function R(x, y, w, h, c) { g.fillStyle = c; g.fillRect(snap(x), snap(y), w, h); }
 function P(x, y, c) { g.fillStyle = c; g.fillRect(snap(x), snap(y), 1, 1); }
 function line(x0, y0, x1, y1, c) {
@@ -256,7 +258,7 @@ function tintEdges_(px, w, h) {
 const PK_CACHE = new Map();
 const pk = c => { let v = PK_CACHE.get(c); if (v === undefined) { const [r, gg, b] = hex(c); v = (255 << 24 | b << 16 | gg << 8 | r) >>> 0; PK_CACHE.set(c, v); } return v; };
 function blit(c, x, y) {
-  const s = c.lo && !(g === sceneCtx && SS >= 2) ? c.lo : c, a = s.art || 1;
+  const s = c.lo && !((g === sceneCtx || g.sceneCache) && SS >= 2) ? c.lo : c, a = s.art || 1;
   g.drawImage(s, snap(x) - 1, snap(y) - 1, s.width / a, s.height / a);
 }
 // 2x copy of packed pixels: plain doubling (square pixel corners) by default; ?round=1 = Scale2x / EPX,
@@ -335,9 +337,9 @@ function capture_(x0, y0, w, h, fn) {
   return { c: hi, x0, y0 };
 }
 // draw part (sx, sy, sw, sh in art px) of a capture, or all of it at an offset
-function blitCap_(cap, sx, sy, sw, sh) {
-  const hi = cap.c.lo && g === sceneCtx && SS >= 2, c = hi ? cap.c : (cap.c.lo || cap.c), k = hi ? 2 : 1;
-  g.drawImage(c, (sx - cap.x0) * k, (sy - cap.y0) * k, sw * k, sh * k, sx, sy, sw, sh);
+function blitCap_(cap, sx, sy, sw, sh, dx, dy) {   // dx, dy: optional offset to draw it at
+  const hi = cap.c.lo && (g === sceneCtx || g.sceneCache) && SS >= 2, c = hi ? cap.c : (cap.c.lo || cap.c), k = hi ? 2 : 1;
+  g.drawImage(c, (sx - cap.x0) * k, (sy - cap.y0) * k, sw * k, sh * k, sx + (dx || 0), sy + (dy || 0), sw, sh);
 }
 // procedural sprite: draw with R/P inside fn
 function mk(w, h, fn) {
@@ -1608,8 +1610,30 @@ function drawWindows() {
     if (weather === 'rain') for (let k = 0; k < 7; k++) R(win.x + ((k * 5 + TIME * 22) % win.w), win.y + ((k * 7 + TIME * 60) % win.h), 1, 2, 'rgba(210,225,255,0.7)');
     if (weather === 'snow') for (let k = 0; k < 8; k++) P(win.x + ((k * 5 + Math.sin(TIME + k) * 2 + 40) % win.w), win.y + ((k * 7 + TIME * 6) % win.h), '#ffffff');
     g.restore();
-    if (night < 0.95) lights.push({ x: win.x + win.w / 2, y: 6, r: 22, a: (1 - night) * 0.8 });
   }
+}
+// The window views (sky gradient, clouds, skyline, rain) are ~200 rectangles; they change slowly, so they're
+// repainted into a saved image 4 times a second (10 in rain or snow, which fall faster) and drawn from it.
+let winCache = null;
+function drawWindowsCached_() {
+  const h = world.hour, night = 1 - daylight(h);
+  if (!winCache) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const w of WINDOWS) { x0 = Math.min(x0, w.x); y0 = Math.min(y0, w.y); x1 = Math.max(x1, w.x + w.w); y1 = Math.max(y1, w.y + w.h); }
+    x0 = Math.floor(x0); y0 = Math.floor(y0); x1 = Math.ceil(x1); y1 = Math.ceil(y1);
+    winCache = { cv: canvas((x1 - x0) * SS, (y1 - y0) * SS), x0, y0, w: x1 - x0, h: y1 - y0, t: -1e9, key: '' };
+    winCache.ctx = winCache.cv.getContext('2d'); winCache.ctx.sceneCache = true;
+  }
+  const c = winCache, every = weather === 'rain' || weather === 'snow' ? 0.1 : 0.25, key = weather + '|' + SS;
+  if (TIME - c.t >= every || c.key !== key) {
+    c.t = TIME; c.key = key;
+    const x = c.ctx, keep = g;
+    x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, c.cv.width, c.cv.height);
+    x.setTransform(SS, 0, 0, SS, -c.x0 * SS, -c.y0 * SS); x.imageSmoothingEnabled = false;
+    g = x; try { drawWindows(); } finally { g = keep; }
+  }
+  g.drawImage(c.cv, 0, 0, c.cv.width, c.cv.height, c.x0, c.y0, c.w, c.h);
+  if (night < 0.95) for (const win of WINDOWS) lights.push({ x: win.x + win.w / 2, y: 6, r: 22, a: (1 - night) * 0.8 });   // every frame, as before
 }
 // live Eastern time (frozen only when ?hour= is used); the red second hand ticks so it reads as a real clock
 function drawClockHands() {
@@ -1707,13 +1731,42 @@ function drawSeatKit(s) {
     else { box(px, py, 4, 3, '#9aa4b0'); R(px, py, 4, 1, '#c8ccd2'); }
   }
 }
+// Desk monitors (and headsets) are dozens of tiny rectangles each, and only change a few times a second. Each
+// frame we run the drawing code against a recorder (cheap: no canvas work), and only when the list of rectangles
+// differs from last time do we paint it into a small saved canvas; otherwise we draw the saved one. Pixel-identical,
+// and side effects like the screen glow (lights) still happen every frame. Cut ~600 fills a frame to ~40 draws.
+const REC = { sceneCache: true, ops: [], fillStyle: '', fillRect(x, y, w, h) { this.ops.push(this.fillStyle, x, y, w, h); } };
+function cachedOps_(holder, fn) {
+  const keep = g; REC.ops = []; REC.fillStyle = ''; g = REC;
+  try { fn(); } finally { g = keep; }
+  const ops = REC.ops;
+  if (!ops.length) return;
+  let c = holder.opsCache, same = !!c && c.ss === SS && c.ops.length === ops.length;
+  for (let i = 0; same && i < ops.length; i++) if (c.ops[i] !== ops[i]) same = false;
+  if (!same) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let i = 0; i < ops.length; i += 5) {
+      x0 = Math.min(x0, ops[i + 1]); y0 = Math.min(y0, ops[i + 2]);
+      x1 = Math.max(x1, ops[i + 1] + ops[i + 3]); y1 = Math.max(y1, ops[i + 2] + ops[i + 4]);
+    }
+    x0 = Math.floor(x0); y0 = Math.floor(y0); x1 = Math.ceil(x1); y1 = Math.ceil(y1);
+    const W = (x1 - x0) * SS, H = (y1 - y0) * SS;
+    if (!c) c = holder.opsCache = { cv: canvas(W, H) };
+    if (c.cv.width < W || c.cv.height < H) { c.cv.width = Math.max(c.cv.width, W); c.cv.height = Math.max(c.cv.height, H); }
+    const x = c.cv.getContext('2d');
+    x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, c.cv.width, c.cv.height);
+    x.setTransform(SS, 0, 0, SS, -x0 * SS, -y0 * SS);
+    for (let i = 0; i < ops.length; i += 5) { x.fillStyle = ops[i]; x.fillRect(ops[i + 1], ops[i + 2], ops[i + 3], ops[i + 4]); }
+    Object.assign(c, { ops, ss: SS, x0, y0, w: x1 - x0, h: y1 - y0 });   // a resize can change SS
+  }
+  g.drawImage(c.cv, 0, 0, c.w * SS, c.h * SS, c.x0, c.y0, c.w, c.h);
+}
 const CHAIR_CAPS = new Map();
 function drawChair(s) {   // chairs come in a few kinds: each is drawn once and cached
   const key = [s.face, s.chair, s.kind, !!s.stool].join('|');
   let cap = CHAIR_CAPS.get(key);
   if (!cap) { cap = capture_(-3, -8, 14, 17, () => drawChairRaw_(s, 0, 0)); CHAIR_CAPS.set(key, cap); }
-  const x = s.x * C8 + (s.back || 0), y = s.y * C8;
-  g.save(); g.translate(x, y); blitCap_(cap, -3, -8, 14, 17); g.restore();
+  blitCap_(cap, -3, -8, 14, 17, s.x * C8 + (s.back || 0), s.y * C8);   // drawn at an offset (no save / translate / restore per chair)
 }
 function drawChairRaw_(s, x, y) {
   const c = s.chair, d = shade(c, 0.78), base = s.kind === 'desk' ? '#3e3833' : '#dacfbd';   // back = pulled out from a widened desk
@@ -1992,7 +2045,7 @@ function drawPerson(w) {
   if (!CLASSIC && !w.seated) groundShadow_(X + 4, Y + 8, 5);
   blit(c, sx, sy);
   w.headX = sx + 6; w.headTop = sy + 1;
-  if (w.headset) drawHeadset(sx, sy + 1, view);
+  if (w.headset) cachedOps_(w.hsCache || (w.hsCache = {}), () => drawHeadset(sx, sy + 1, view));
   if (w.angryUntil > TIME) drawAngry_(sx, sy, view);
   if (w.jug && !w.seated) {   // big blue water jug
     const jx = w.dir === 'left' ? sx - 3 : w.dir === 'down' ? sx + 3 : sx + 9, jy = sy + 6;
@@ -2268,6 +2321,7 @@ const cv = document.getElementById('c'), mctx = cv.getContext('2d');
 let view = null, vctx = null, scale = 1, vig = null;
 const NEED_W = GX * C8 + 30, NEED_H = GY * C8 + 46;
 function resize() {
+  winCache = null;   // rebuilt at the new scene resolution
   const dpr = window.devicePixelRatio || 1;
   cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr);
   const fit = Math.min(cv.width / NEED_W, cv.height / NEED_H);
@@ -2291,7 +2345,7 @@ function buildDrawables() {
   for (const t of TABLES) for (let r = t.y0; r <= t.y1; r++) STATIC.push({ key: (r + 1) * C8 - 0.3, draw: () => drawTableRow(t, r) });
   for (const s of SEATS) {
     const ky = s.face === 'down' && s.kind === 'desk' ? s.y + 2 : s.face === 'up' ? s.y : s.face === 'down' ? s.y + 2 : s.y + 1;
-    STATIC.push({ key: (s.extraMon ? ky + 1 : ky) * C8 - 0.1, draw: () => drawSeatKit(s) });   // the second (lower) monitor reaches into the next desk row
+    STATIC.push({ key: (s.extraMon ? ky + 1 : ky) * C8 - 0.1, draw: () => cachedOps_(s, () => drawSeatKit(s)) });   // the second (lower) monitor reaches into the next desk row
     STATIC.push({ key: (s.y + 1) * C8 + (s.face === 'up' ? 0.6 : 0.4), draw: () => drawChair(s) });
   }
   // tall-but-thin props people stand beside (island, sink counter) sort by their TOP row, so people next to them draw in front
@@ -2314,7 +2368,7 @@ function render() {
   }
   g.translate(OX, OY);
   g.drawImage(hiL && bg2 || bg, -BGX, -BGY, bg.width, bg.height);
-  drawWindows();
+  drawWindowsCached_();
   g.drawImage(hiL && wallFG2 || wallFG, -BGX, -BGY, bg.width, bg.height);
   if (!CLASSIC) drawWindowLight_();
   drawClockHands();
@@ -2860,13 +2914,28 @@ function frame(now) {
   acc += dt;
   if (acc < STEP) return;
   const s = Math.min(acc, 0.12); acc = 0;
-  try { step(s); render(); okAt = Date.now(); }
+  try {
+    const t0 = DEBUG ? performance.now() : 0;
+    step(s); render(); okAt = Date.now();
+    if (DEBUG) debugFrame_(now, performance.now() - t0);
+  }
   catch (e) {   // a bad frame: keep going, but if it keeps failing for 30 s, start fresh rather than sit frozen on the TV
     if (Date.now() - okAt > 30000 && !healing) { healing = true; reloadFresh_(); }
     if (window.console && Date.now() - warnedAt > 5000) { warnedAt = Date.now(); console.warn('frame failed', e); }
   }
 }
 let okAt = Date.now(), warnedAt = 0, healing = false;
+// ?debug=1: frames per second and ms per frame in the corner (to see how a TV copes; IS_TV = 30 fps target)
+const DEBUG = params.get('debug') === '1';
+const dbg = { n: 0, ms: 0, t: 0, fps: 0, avg: 0, worst: 0, w: 0 };
+function debugFrame_(now, ms) {
+  dbg.n++; dbg.ms += ms; dbg.w = Math.max(dbg.w, ms);
+  if (now - dbg.t >= 1000) { dbg.fps = Math.round(dbg.n * 1000 / (now - dbg.t || 1)); dbg.avg = dbg.ms / (dbg.n || 1); dbg.worst = dbg.w; dbg.n = 0; dbg.ms = 0; dbg.w = 0; dbg.t = now; }
+  const fs = Math.max(14, Math.round(cv.height / 50)), txt = dbg.fps + ' fps (target ' + FPS + ')  ' + dbg.avg.toFixed(1) + ' ms/frame  worst ' + dbg.worst.toFixed(0) + ' ms  SS ' + SS + (IS_TV ? '  TV' : '');
+  mctx.font = fs + 'px sans-serif'; const tw = mctx.measureText(txt).width;
+  mctx.fillStyle = 'rgba(0,0,0,0.7)'; mctx.fillRect(0, 0, tw + fs, fs * 1.6);
+  mctx.fillStyle = '#7fe0b0'; mctx.fillText(txt, fs / 2, fs * 1.15);
+}
 // A fresh start once a night (about 3 am Eastern, when nobody's in), so an old TV browser never runs for weeks on end.
 setInterval(() => { const h = zoneNow().h; if (h >= 3 && h < 3.1 && performance.now() > 2 * 3600 * 1000 && location.protocol !== 'file:') reloadFresh_(); }, 60 * 1000);
 requestAnimationFrame(frame);
