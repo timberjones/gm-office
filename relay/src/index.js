@@ -9,6 +9,11 @@
 //                  (pm.n) and the Eastern hour of the latest afternoon post (pm.h, about when that laptop left).
 //                  Everyone gets { t: 'count', day, n, pm }; pages use it as today's headcount (and wind the afternoon
 //                  down from pm to 6 pm), and fall back to the weekday guess when there's none for today.
+// One session per user id: a page connecting with ?uid= while another page (a different ?sid=) already drives that id
+// becomes a clone, '<uid>c1', '<uid>c2'..., told so with { t: 'you', uid, clone: true }; clones walk in from the
+// entrance, don't save looks, and their trivia scores count for the real id. The same sid reconnecting (a dropped
+// phone) takes over its old socket instead. For a real session we ask the leading screen where that character is
+// ({ t: 'whereq', uid } -> { t: 'where', uid, x, y, dir, sit, present }) so the page starts there instead of walking in.
 // Secret plant trivia (gm-user.html, in the washroom): a driver posts { t: 'score', n } after a 30 s round. We keep
 // today's best (Eastern date) and send { t: 'trivia', day, n, uid } to pages that connected with v=2 (older pages
 // would misread it), and include it in their 'state'.
@@ -71,7 +76,19 @@ export class Office extends DurableObject {
 
   async fetch(req) {
     if (new URL(req.url).pathname === '/count') return this.postCount_(req);
-    const q = new URL(req.url).searchParams, uid = q.get('uid'), sync = !uid && q.get('sync') === '1';   // older pages don't sync
+    const q = new URL(req.url).searchParams, base = q.get('uid'), sync = !base && q.get('sync') === '1';   // older pages don't sync
+    const sid = (q.get('sid') || '').slice(0, 40), open = w => w.readyState === 1;
+    let uid = base, clone = false;
+    if (base) {
+      for (const w of this.ctx.getWebSockets('u' + base)) {   // the same tab reconnecting: replace its old socket
+        const a = w.deserializeAttachment();
+        if (sid && a && a.sid === sid) { a.replaced = true; w.serializeAttachment(a); try { w.close(1000, 'replaced'); } catch (e) {} }
+      }
+      if (this.ctx.getWebSockets('u' + base).some(w => open(w) && !(w.deserializeAttachment() || {}).replaced)) {   // someone else has this id
+        clone = true;
+        for (let k = 1; k < 50; k++) { const c = base + 'c' + k; if (!this.ctx.getWebSockets('u' + c).some(open)) { uid = c; break; } }
+      }
+    }
     const [client, server] = Object.values(new WebSocketPair());
     const tags = uid ? ['ctl', 'u' + uid] : sync ? ['view', 'sync'] : ['view'];
     const v2 = (+q.get('v') || 1) >= 2;   // understands newer messages (trivia)
@@ -82,7 +99,12 @@ export class Office extends DurableObject {
       lead = !this.leader_();
       this.joinAt = Date.now();
     }
-    server.serializeAttachment({ uid: uid || null, last: null, n: 0, t0: 0, lead });
+    server.serializeAttachment({ uid: uid || null, base: base || null, clone, sid, last: null, n: 0, t0: 0, lead });
+    if (uid && v2) {
+      server.send(JSON.stringify({ t: 'you', uid, clone }));
+      const L = this.leader_();   // where is this character right now? the leading screen answers, we pass it on
+      if (!clone && L && (L.deserializeAttachment() || {}).v2 !== false) try { L.send(JSON.stringify({ t: 'whereq', uid })); } catch (e) {}
+    }
     const looks = {};
     for (const [k, v] of await this.ctx.storage.list({ prefix: 'look:' })) looks[k.slice(5)] = v;
     if (sync) server.send(JSON.stringify({ t: 'role', lead, peers: this.views_().length - 1 }));
@@ -105,7 +127,7 @@ export class Office extends DurableObject {
     a.scoreAt = now; ws.serializeAttachment(a);
     const old = await this.trivia_();
     if (old && old.n >= n) return;
-    const t = { day: eastern().day, n, uid: a.uid, at: now };
+    const t = { day: eastern().day, n, uid: a.base || a.uid, at: now };   // a clone's score counts for the real id
     await this.ctx.storage.put('trivia', t);
     const s = JSON.stringify({ t: 'trivia', ...t });
     for (const w of this.ctx.getWebSockets('v2')) try { w.send(s); } catch (e) {}
@@ -163,6 +185,10 @@ export class Office extends DurableObject {
       if (a.lead) return;
       const L = this.leader_();
       if (!L || now - Math.max(this.snapAt || 0, this.joinAt || 0) > QUIET_MS) this.makeLeader_(ws);
+    } else if (m.t === 'where') {   // the leader's answer to whereq: pass it to that id's page
+      if (!a.lead || typeof m.uid !== 'string' || !/^\d{1,8}$/.test(m.uid)) return;
+      const out = JSON.stringify({ t: 'where', x: m.x | 0, y: m.y | 0, dir: DIRS.includes(m.dir) ? m.dir : 'down', sit: !!m.sit, present: !!m.present });
+      for (const w of this.ctx.getWebSockets('u' + m.uid)) try { w.send(out); } catch (e) {}
     } else if (m.t === 'poke') {
       const i = m.i | 0, L = this.leader_();   // -1 courier, -2 water delivery, -3 / -4 the dogs
       if (L && L !== ws && i >= -4 && i < 200) try { L.send(JSON.stringify({ t: 'poke', i })); } catch (e) {}
@@ -203,9 +229,9 @@ export class Office extends DurableObject {
     }
     const out = { t: m.t, uid: a.uid };
     if (m.t === 'look') {
-      const look = cleanLook(m.look, a.uid);
+      const look = cleanLook(m.look, a.base || a.uid);
       if (!look) return;
-      await this.ctx.storage.put('look:' + a.uid, look);
+      if (!a.clone) await this.ctx.storage.put('look:' + a.uid, look);   // a clone's look is just for now
       out.look = look;
     } else if (m.t !== 'hb' && m.t !== 'bark') {
       const x = m.x | 0, y = m.y | 0;
@@ -227,7 +253,7 @@ export class Office extends DurableObject {
       else this.tellPeers_();
       return;
     }
-    if (!a || !a.uid) return;
+    if (!a || !a.uid || a.replaced) return;   // replaced by the same tab reconnecting: they never left
     const still = this.ctx.getWebSockets('u' + a.uid).some(o => o !== ws && o.readyState === 1);   // another tab of theirs is still open
     if (!still) this.broadcast_(ws, { t: 'bye', uid: a.uid });
   }

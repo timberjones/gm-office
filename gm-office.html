@@ -2616,7 +2616,7 @@ function workerOf_(uid) {   // [worker, variant] for a user id, or null
 }
 const seatAt_ = (x, y) => SEATS.find(s => s.x === x && s.y === y);
 function applyLook_(uid, look) {
-  if (!look || !!look.dog !== (String(uid) === DOG_ID)) return;   // only 101 is a dog, and 101 is always one
+  if (!look || !!look.dog !== (baseUid_(uid) === DOG_ID)) return;   // only 101 (and its clones) is a dog, and 101 is always one
   looks[uid] = look;
   const hit = workerOf_(uid);
   if (!hit) return;
@@ -2626,8 +2626,14 @@ function applyLook_(uid, look) {
 }
 // Someone new (an id we don't know): a visitor with no desk. They walk in, go where they're driven, and leave
 // when their page closes. Slots are reused once a visitor has gone.
+// A clone ('2372c1': the same id opened on a second device) looks like the real one.
+const baseUid_ = uid => String(uid).replace(/c\d+$/, '');
+function lookFor_(uid, fallback) {
+  const b = baseUid_(uid), hit = workerOf_(b);
+  return looks[uid] || looks[b] || (hit && hit[1].look) || (b === DOG_ID ? DOG_LOOK : fallback());
+}
 function visitorFor_(uid) {
-  const look = looks[uid] || (String(uid) === DOG_ID ? DOG_LOOK : randomLook()), v = { uid: String(uid), dogOwner: false, look, frames: framesFor_(look) };
+  const look = lookFor_(uid, randomLook), v = { uid: String(uid), dogOwner: false, look, frames: framesFor_(look) };
   let w = workers.find(o => o.visitor && !o.present && !o.ctl);
   if (!w) {
     if (workers.filter(o => o.visitor).length >= MAX_VISITORS) return null;
@@ -2724,6 +2730,14 @@ function onRelay_(m) {
   if (m.t === 'role') { setRole_(m.lead, m.peers); return; }
   if (m.t === 'peers') { syncPeers = m.n | 0; if (syncMode === 'lead' && syncPeers) sendSnap_(); return; }
   if (m.t === 'snap') { if (syncMode === 'follow') applySnap_(m); return; }
+  if (m.t === 'whereq') {   // someone opened their id on gm-user.html: where is their character right now?
+    if (syncMode === 'lead') {
+      const hit = workerOf_(m.uid), w = hit && hit[0];
+      const here = !!(w && w.present && w.tx >= 0 && String(w.v.uid) === String(m.uid));   // shared seat: only if it's their turn
+      relaySend_({ t: 'where', uid: String(m.uid), x: here ? w.tx : 0, y: here ? w.ty : 0, dir: here ? w.dir : 'down', sit: here && w.seated, present: here });
+    }
+    return;
+  }
   if (m.t === 'poke') { if (syncMode !== 'follow') { const w = whoAt_(m.i); if (w && w.present && !w.hidden) poke_(w); } return; }
   if (m.t === 'trivia') { triviaBest = m; return; }
   if (m.t === 'state') {   // (re)connected: everyone's looks, and exactly these people are driving right now
@@ -2870,7 +2884,7 @@ function applySnap_(m) {
     }
     const w = workers[i];
     if (w.visitor && e[10] && w.v.uid !== String(e[10])) {
-      const uid = String(e[10]), look = looks[uid] || (uid === DOG_ID ? DOG_LOOK : seededLook_(uid)), v = { uid, dogOwner: false, look, frames: framesFor_(look) };
+      const uid = String(e[10]), look = lookFor_(uid, () => seededLook_(uid)), v = { uid, dogOwner: false, look, frames: framesFor_(look) };
       Object.assign(w, { variants: [v], v, look, frames: v.frames, isDog: !!look.dog, talk: look.dog ? 0 : ROLES.staff.talk });
     }
     const v = w.variants[e[9] | 0];

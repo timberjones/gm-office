@@ -176,6 +176,7 @@
 // markers), so this page always draws and walks exactly like the office does.
 const RELAY_PARAM = new URLSearchParams(location.search).get('relay');   // ?relay= for testing against a local relay (kept in the address)
 const RELAY_URL = RELAY_PARAM || 'wss://gm-office-relay.tj-c25.workers.dev/ws';
+const SID = Math.random().toString(36).slice(2, 12);   // this tab: if it reconnects, the relay knows it's still us (not a second person)
 const keepQS = () => RELAY_PARAM ? 'relay=' + encodeURIComponent(RELAY_PARAM) : '';
 const MANUAL_WALK = 48;   // px per second, same as a driven character on the TV
 const DIRV = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
@@ -451,17 +452,34 @@ function setStatus() {
 function relayConnect() {
   if (!me || relay.ws || relay.stop) return;
   let ws;
-  try { ws = new WebSocket(RELAY_URL + '?uid=' + me.uid + '&v=2'); } catch (e) { return; }   // v=2: send us trivia messages
+  try { ws = new WebSocket(RELAY_URL + '?uid=' + me.uid + '&v=2&sid=' + SID); } catch (e) { return; }   // v=2: send us trivia messages
   relay.ws = ws; setStatus();
   ws.onopen = () => {
     relay.ok = true; relay.wait = 1000; setStatus();
-    send({ t: 'hello', x: me.tx, y: me.ty, dir: me.dir, sit: !!me.seat });
-    if (me.lookPending) sendLook();
+    // wait a moment for the relay to say where our character is right now (or that we're a clone), then say hello
+    me.started = false; clearTimeout(me.startT); me.startT = setTimeout(startHello, 1500);
   };
   ws.onmessage = e => {
     if (e.data === 'pong') return;
     let m; try { m = JSON.parse(e.data); } catch (er) { return; }
     if (m.t === 'trivia') { todayBest = m; return; }
+    if (m.t === 'you' && me) {   // the relay's answer: are we the real session, or a clone (this id is open somewhere else)?
+      me.clone = !!m.clone;
+      if (me.clone && !me.started) {   // a clone comes in through the entrance
+        Object.assign(me, { tx: 0, ty: 25, seat: null, dir: 'right', q: [] }); me.px = 0; me.py = 25 * C8;
+        $('who').textContent = 'User ' + me.uid + ' (a clone: this id is open somewhere else)';
+        updateWhere(); startHello();
+      }
+      return;
+    }
+    if (m.t === 'where' && me && !me.started) {   // where our character is in the office right now: start there
+      if (m.present) {
+        const seat = m.sit ? seatAt(m.x, m.y) : null;
+        Object.assign(me, { tx: m.x, ty: m.y, seat, dir: seat ? seat.face : m.dir, q: [] }); me.px = m.x * C8; me.py = m.y * C8;
+      }
+      updateWhere(); startHello();
+      return;
+    }
     if (m.t !== 'state' || !me) return;
     if (m.trivia) todayBest = m.trivia;
     const saved = m.looks && m.looks[me.uid];
@@ -474,6 +492,12 @@ function relayConnect() {
     relay.ok = false; relay.ws = null; setStatus();
     if (!relay.stop && me) { setTimeout(relayConnect, relay.wait); relay.wait = Math.min(relay.wait * 2, 60000); }
   };
+}
+function startHello() {   // tell the office where we are (once per connection)
+  if (!me || me.started) return;
+  me.started = true; clearTimeout(me.startT);
+  send({ t: 'hello', x: me.tx, y: me.ty, dir: me.dir, sit: !!me.seat });
+  if (me.lookPending) sendLook();
 }
 function relayHangUp() { relay.stop = true; if (relay.ws) relay.ws.close(); relay.ws = null; relay.ok = false; }
 setInterval(() => send({ t: 'hb' }), 20000);   // still here (the TV lets go of a silent driver after 75 s)
