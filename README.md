@@ -121,6 +121,7 @@ Every screen runs the same simulation code, and the simulation is random: who ge
   - It counts only laptops: PC Wi-Fi chip makers (Intel, AzureWave, Liteon, Realtek, Foxconn/Fugui...) and Apple devices with a fixed address.
   - It skips randomized MACs (phones), smart-home devices, printers and network gear. It's anonymous: only a number leaves the laptop.
 - The number goes to the relay's `POST /count` with a secret token. Before 2 pm the relay keeps the day's highest number. From 2 pm on it keeps the lowest number and the time it was sent: when the laptop's owner leaves, the TV sends them home and lets the rest leave one by one until 6 pm.
+- **On the TV:** the people a count covers are in right away, not at their usual arrival time, so the TV matches the scan within a minute of each push. The laptop running the scan is the product seat's, so that character is always in when there's a count for today, on any day of the week.
 - **Fallback:** a count only applies to the day it was sent. With no count for today (laptop owner away, laptop asleep, script failed, relay down), the TV uses its usual weekday guess: Tue/Thu 80-95% of desks, Mon/Wed/Fri 10-30%. The office never depends on the script.
 - First real check (2026-10-06): the script said 19 with 20 people in.
 

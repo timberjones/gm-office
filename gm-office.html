@@ -926,13 +926,16 @@ const lunchTime = w => world.hour >= w.lunch && world.hour < w.lunch + w.lunchLe
 // Who's in today: Tue/Thu 80-95% of desks, Mon/Wed/Fri 10-30%, weekends nobody.
 // Seeded by the date so the same people show up all day (and on every screen showing the page that day).
 // A live headcount for today (tools/office-headcount.ps1 on a laptop in the office, via the relay) replaces the
-// weekday guess. Same seed, so a higher count just brings in more of the same people. An afternoon count (pm: the
+// weekday guess. Same seed, so a higher count just brings in more of the same people, and they come in right away
+// rather than at their usual time (the scan saw them). The product seat is always one of them. An afternoon count (pm: the
 // lowest after 2 pm, posted until that laptop's owner leaves) winds the day down: see windDown_.
 let rosterKey = '';
 let liveCount = null;   // { day, n, pm: { n, h } } from the relay
+let liveToday = false;   // there's a live count for today: the people it counted are in now (TJ 2026-10-08), see wantPresent
 function pickRoster() {
   const z = zoneDay();
   const lc = PEOPLE == null && liveCount && liveCount.day === z.key ? liveCount : null;
+  liveToday = !!lc;
   const pm = lc && lc.pm ? lc.pm : null;
   const ns = lc ? [lc.n, pm && pm.n].filter(v => v != null) : [];
   const live = ns.length ? Math.max(...ns) : null;
@@ -951,7 +954,8 @@ function pickRoster() {
   hrVisitor.home = HR_SEATS[r() < 0.5 ? 0 : 1];
   if (hrVisitor.today) hrVisitor.home.owner = hrVisitor;
   if (!hrVisitor.present) Object.assign(hrVisitor, { px: hrVisitor.home.x * C8, py: hrVisitor.home.y * C8, tx: hrVisitor.home.x, ty: hrVisitor.home.y });
-  workers.forEach(w => { if (w.fixed) w.today = weekday && (!ROLES[w.role].days || ROLES[w.role].days.includes(z.wd)); });
+  // the count comes from the product laptop, so a count for today means that seat is in, whatever the day (TJ 2026-10-08)
+  workers.forEach(w => { if (w.fixed) w.today = (lc && w.home.code === 'product-1') || (weekday && (!ROLES[w.role].days || ROLES[w.role].days.includes(z.wd))); });
   const want = PEOPLE != null ? PEOPLE : live;
   const n = Math.min(rest.length, want != null ? Math.max(0, want - workers.filter(w => (w.fixed || w === hrVisitor) && w.today).length) : Math.round(frac * rest.length));
   const order = rest.map(w => [r(), w]).sort((a, b) => a[0] - b[0]).map(p => p[1]);
@@ -1093,7 +1097,7 @@ function wantPresent(w) {
   if (w.present && townhallNow_()) return true;   // nobody heads home in the middle of a townhall
   const h = world.hour;
   if (!w.today) return false;
-  if (h < w.in || h >= w.out) return false;
+  if ((h < w.in && !liveToday) || h >= w.out) return false;   // a live count means they're already here: no waiting for w.in
   if (w.lunchMode === 'out' && lunchTime(w)) return false;
   return true;
 }
