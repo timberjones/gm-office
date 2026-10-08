@@ -614,12 +614,12 @@ deskSeats.push(addSeat(7, 5, 'left', 'desk', { role: 'cfoteam', code: 'cfo-team'
 addSeat(21, 6, 'right', 'desk');   // COO's office second desk: nobody sits there
 const CEO_SIDE_DESK = addSeat(30, 6, 'right', 'desk');                // CEO office's second desk: the HR visitor sometimes sits here
 [11, 13, 15, 17].forEach((y, i) => deskSeats.push(addSeat(8, y, 'left', 'desk', { role: 'am', code: 'am-' + (i + 1) })));   // left wall: account managers
-const islandCount = { intern: 0, buyer: 0 };
-for (const [l, r, role] of [[14, 18, 'intern'], [24, 28, 'buyer'], [34, 38, 'buyer']])                  // islands: accounting/interns, then plant buyers
+const islandCount = { 'co-op': 0, buyer: 0 };
+for (const [l, r, role, pre] of [[14, 18, 'intern', 'co-op'], [24, 28, 'buyer', 'buyer'], [34, 38, 'buyer', 'buyer']])   // islands: co-ops (intern role), then plant buyers
   for (const y of [11, 13, 15]) {
     const pt = l === 34 && y === 15;   // right-most island, bottom-left seat: product + tech, with an extra monitor
-    deskSeats.push(addSeat(l, y, 'right', 'desk', pt ? { role: 'product', code: 'product-1', extraMon: true } : { role, code: role + '-' + (++islandCount[role]) }));
-    deskSeats.push(addSeat(r, y, 'left', 'desk', { role, code: role + '-' + (++islandCount[role]) }));
+    deskSeats.push(addSeat(l, y, 'right', 'desk', pt ? { role: 'product', code: 'product-1', extraMon: true } : { role, code: pre + '-' + (++islandCount[pre]) }));
+    deskSeats.push(addSeat(r, y, 'left', 'desk', { role, code: pre + '-' + (++islandCount[pre]) }));
   }
 // right wall desk: three buyers squeezed in, three monitors (top 2342, middle 2155, bottom 2210)
 [[10, 'buyer-14'], [12, 'buyer-12'], [14, 'buyer-13']].forEach(([y, code]) => deskSeats.push(addSeat(45, y, 'right', 'desk', { role: 'buyer', code })));
@@ -835,6 +835,10 @@ const KNOWN = {
   'am-3': [{ uid: 2411, look: { hair: '#8a5a32', skin: 0, shirt: '#5b6a95', pants: '#2f3a5c', style: 'short' } }],   // white male
   'am-float': [{ uid: 1430, look: { hair: '#3a2a20', skin: 0, shirt: '#3b6fd6', pants: '#2f3a5c', style: 'short' } }],   // AM with no desk: CEO's second desk when free (see amFloater)
   'floater': [{ uid: 1426, look: { hair: '#6b4a2a', skin: 0, shirt: '#d97757', pants: '#2f3a5c', style: 'long' } }],   // no seat: see ROLES.floater
+  // left island: co-ops (intern role: they only speak if they have One-liners rows)
+  'co-op-1': [{ uid: 2425, look: { hair: '#1a1a24', skin: 3, shirt: '#8f2a2e', pants: '#2f3a5c', style: 'long' } }],   // black hair, dark red shirt
+  'co-op-2': [{ uid: 2212, look: { hair: '#2a1a14', skin: 2, shirt: '#d9453b', pants: '#2f3a5c', style: 'long' } }],   // tanned, dark hair, red shirt
+  'co-op-3': [{ uid: 2355, look: { hair: '#1a1a24', skin: 0, shirt: '#f3ecdf', pants: '#3a3f55', style: 'short' } }],   // black hair, white shirt
   'bar-1': [{ uid: 2679, look: { hair: '#2a1a14', skin: 2, shirt: '#5b6a95', pants: '#2a2238', style: 'short', goatee: true } }],
 };
 // Extra buttons on gm-user.html beyond walk / sit / talk, by user id. Only these ids get them (TJ 2026-10-07: nobody
@@ -917,7 +921,7 @@ function assignOverflow_(want) {
   });
 }
 // A desk she can take: an island / wall desk whose owner isn't in today and that nobody is sitting at.
-const FLOAT_DESK = /^(buyer|intern|am)-/;
+const FLOAT_DESK = /^(buyer|co-op|am)-/;
 function freeDesk_(w, rf) {
   const ok = deskSeats.filter(s => FLOAT_DESK.test(s.code) && s !== w.home && deskFree_(s, w));
   return ok.length ? ok[Math.floor((rf || rand)() * ok.length)] : null;
@@ -2417,8 +2421,8 @@ function ownLinesFor_(uid) {   // just their One-liners rows (feed 'lines'); an 
 }
 // Who speaks: someone in the office with their own lines (it's their turn at a shared seat), or anyone for "all" lines.
 // The Talk button on gm-user.html: one line for that character (TJ 2026-10-08): their own One-liners rows first; else
-// their group's (a role code like 'am', or a role's fixed lines); else their work numbers; else the 'all' lines if
-// their role talks at all (interns, HR, product and the like don't); else nothing. At most every 2 s.
+// their group's (a role code like 'am', or a role's fixed lines); else their work numbers and then the 'all' lines,
+// if their role talks at all (co-ops, HR and the like don't; product gets numbers, not 'all'); else nothing. At most every 2 s.
 function doAction_(uid, a) {   // only ids that have that action (clones too); followers see it in the snapshots
   const list = ACTIONS[baseUid_(uid)] || [], hit = workerOf_(uid), w = hit && hit[0];
   if (!w || !w.present || w.hidden || !list.some(x => x.id === a)) return;
@@ -2437,7 +2441,7 @@ function talkFor_(uid) {
   const base = baseUid_(uid), R0 = ROLES[w.role] || {};
   let lines = ownLinesFor_(base);
   if (!lines.length) lines = speechFor_(w.role).concat(R0.lines || []);
-  if (!lines.length) lines = speechFor_(base);
+  if (!lines.length && w.talk > 0) lines = speechFor_(base);
   if (!lines.length && w.talk > 0 && w.role !== 'product') lines = speechFor_('all');
   if (!lines.length) return;
   w.talkT = TIME;
@@ -2448,7 +2452,8 @@ function sayRandom() {
   const here = workers.filter(w => w.present && !w.hidden && w.px >= 0);
   const pools = [];
   if (feed) {
-    const mine = here.filter(w => w.v.uid).map(w => [w, speechFor_(w.v.uid)]).filter(p => p[1].length);
+    // roles that don't talk (co-ops, HR...) only ever say their own One-liners rows, never their work numbers
+    const mine = here.filter(w => w.v.uid).map(w => [w, w.talk > 0 ? speechFor_(w.v.uid) : ownLinesFor_(w.v.uid)]).filter(p => p[1].length);
     if (mine.length) pools.push([() => { const [w, lines] = pick(mine); return [w, pick(lines)]; }, 3]);
     const all = speechFor_('all'), talkers = here.filter(w => w.talk > 0 && w.role !== 'product');   // interns + HR never talk; product only says their own lines
     if (all.length && talkers.length) pools.push([() => [weighted(talkers.map(c => [c, c.talk])), pick(all)], 2]);
