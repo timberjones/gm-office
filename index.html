@@ -2,9 +2,42 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GM Office</title>
-<meta http-equiv="refresh" content="0; url=gm-office.html">
-<script>location.replace('gm-office.html' + location.search + location.hash);</script>
+<style>
+html, body { margin: 0; height: 100%; overflow: hidden; background: #0a0e2a; }
+iframe { position: fixed; top: 0; left: 0; width: 100%; height: 100%; border: 0; display: block; }
+</style>
 </head>
-<body style="background:#0a0e2a"></body>
+<body>
+<script>
+// The TV's address. The office (gm-office.html) runs in a full-page frame, and a click there makes THIS page go
+// fullscreen (see toggleFullscreen_ in gm-office.html). The office reloads itself for updates and at 3 am; only the
+// frame reloads, so the TV stays fullscreen. A reloaded page can't go fullscreen by itself, it needs a click.
+// Plain ES5: the TV's browser is old.
+var FRAME_SHELL = true;
+(function () {
+  var q = location.search, h = location.hash;
+  if (/[?&]user(=|_\d)/.test(q)) { location.replace('gm-office.html' + q + h); return; }   // old ?user= links: the user page
+  var f = document.createElement('iframe');
+  f.src = 'gm-office.html' + q + h;
+  f.setAttribute('allowfullscreen', ''); f.setAttribute('allow', 'fullscreen');
+  f.onload = function () { try { f.contentWindow.focus(); } catch (e) {} };   // keys (the remote's OK) go to the office
+  document.body.appendChild(f);
+  function toggle() {
+    var d = document, el = d.documentElement;
+    if (d.fullscreenElement || d.webkitFullscreenElement) { (d.exitFullscreen || d.webkitExitFullscreen).call(d); return; }
+    var go = el.requestFullscreen || el.webkitRequestFullscreen || el.webkitRequestFullScreen;
+    if (!go) return;
+    var p = go.call(el);
+    if (p && p.catch) p.catch(function () {});
+  }
+  // a key that lands here instead of in the office (it hasn't taken focus yet): Enter / F still toggle fullscreen
+  document.addEventListener('keydown', function (e) {
+    if (e.keyCode === 13 || e.keyCode === 70) toggle();
+    try { f.contentWindow.focus(); } catch (err) {}
+  });
+})();
+</script>
+</body>
 </html>

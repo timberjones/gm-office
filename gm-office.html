@@ -3153,13 +3153,21 @@ cv.addEventListener('mousemove', e => {
   clearTimeout(cursorT); cursorT = setTimeout(() => { cv.style.cursor = 'none'; }, 3000);
 });
 // Full screen: F, the remote's OK / Enter, or a click on an empty spot. Old TV browsers only have the webkit- names.
-function toggleFullscreen_() {
-  const d = document, el = d.documentElement;
-  if (d.fullscreenElement || d.webkitFullscreenElement) { (d.exitFullscreen || d.webkitExitFullscreen).call(d); return; }
+// Inside the frame page (index.html, the TV's address) it's the frame page that goes fullscreen, so this page can
+// reload (updates, the 3 am restart) without dropping out of it: a reloaded page may not go fullscreen by itself.
+// If the frame page can't (an old browser not passing the click on), this page goes fullscreen as before.
+function shellDoc_() {
+  try { return window.parent !== window && parent.FRAME_SHELL ? parent.document : null; } catch (e) { return null; }
+}
+function toggleFullscreen_(own) {
+  const fs = x => x && (x.fullscreenElement || x.webkitFullscreenElement), sd = own ? null : shellDoc_();
+  const on = fs(document) ? document : fs(sd) ? sd : null;
+  if (on) { (on.exitFullscreen || on.webkitExitFullscreen).call(on); return; }
+  const d = sd || document, el = d.documentElement;
   const go = el.requestFullscreen || el.webkitRequestFullscreen || el.webkitRequestFullScreen;
-  if (!go) return;
+  if (!go) { if (d !== document) toggleFullscreen_(true); return; }
   const p = go.call(el);
-  if (p && p.catch) p.catch(() => {});
+  if (p && p.catch) p.catch(() => { if (d !== document) toggleFullscreen_(true); });
 }
 cv.addEventListener('click', e => {
   const w = personAt_(e);
@@ -3247,7 +3255,9 @@ function checkForUpdate_() {
 }
 function reloadFresh_() {   // a new ?v= so the browser can't hand back its cached copy (Pages lets it keep one 10 min)
   const q = location.search.replace(/([?&])v=[^&]*&?/, '$1').replace(/[?&]$/, '');
-  location.replace(location.pathname + (q ? q + '&' : '?') + 'v=' + Date.now() + location.hash);
+  // not inside the frame page yet (a TV opened before it existed): move into it, so fullscreen survives from then on
+  const path = shellDoc_() || window.parent !== window ? location.pathname : location.pathname.replace(/gm-office\.html$/, 'index.html');
+  location.replace(path + (q ? q + '&' : '?') + 'v=' + Date.now() + location.hash);
 }
 checkForUpdate_();
 setInterval(checkForUpdate_, 5 * 60 * 1000);

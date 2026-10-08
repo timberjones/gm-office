@@ -10,6 +10,7 @@ A pixel-art idle screen of the office, made for the office TV. The team works, t
 The office TV is an older Samsung running the page in its built-in browser.
 
 - **Fullscreen:** move the remote's pointer to an empty spot (not a person) and click. Click again to leave fullscreen. Enter (the remote's OK button) and F on a keyboard also toggle it.
+- **Fullscreen survives updates and restarts.** The TV's address (`index.html`) is a thin frame page with the office (`gm-office.html`) inside it. A click makes the frame page go fullscreen, and the office's reloads (updates, the 3 am restart) only reload the inner frame. A reloaded page can't go fullscreen by itself; browsers require a click. If the TV's browser won't let the frame page go fullscreen, the office goes fullscreen as it did before, and then a reload drops out of it again.
 - **It looks after itself.** If drawing keeps failing for 30 seconds, the page restarts itself instead of sitting frozen, and it also restarts once a night around 3 am. A bad or unknown message from the relay is skipped instead of breaking the page.
 - **Updates install themselves.** Every 5 minutes the page asks GitHub Pages whether a new version has been published (a tiny request that downloads nothing) and reloads itself when one has, keeping its address options. A push reaches the TV within about 5-10 minutes, with nobody touching it.
 - **If the page can't start**, it shows a red bar with the error and the browser's details instead of a blank screen. Send that text along when asking for a fix.
@@ -63,7 +64,7 @@ Open `/u`, type your user id (or `1111`, or "I'm new here", to come in as someon
 
 ## Tech stack
 
-- **Static pages on GitHub Pages.** `gm-office.html` (the TV) and `gm-user.html` (the user page) are each a single self-contained HTML file using a plain canvas, with no build step or framework. `index.html` and `u.html` are short redirects. The user page reuses the TV's sprites and office layout by loading the code between the `@shared` markers in `gm-office.html`.
+- **Static pages on GitHub Pages.** `gm-office.html` (the TV) and `gm-user.html` (the user page) are each a single self-contained HTML file using a plain canvas, with no build step or framework. `index.html` is the TV's frame page (it holds `gm-office.html` full-page, see fullscreen above) and `u.html` is a short redirect. The user page reuses the TV's sprites and office layout by loading the code between the `@shared` markers in `gm-office.html`.
 - **Works on old TV browsers (about Chrome 51 / 2016 and newer).** The TV's built-in Samsung browser is years behind, and one unsupported feature leaves the screen blank. So `gm-office.html`:
   - starts with a small plain-ES5 script that adds the newer functions the page uses when the browser lacks them (`Array.flatMap`, `String.padStart`, `Object.entries`, and `Intl.DateTimeFormat.formatToParts` for the Eastern clock);
   - uses promises instead of `async`/`await`, which old browsers can't even read;
