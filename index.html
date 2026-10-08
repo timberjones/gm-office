@@ -32,8 +32,30 @@ var FRAME_SHELL = true;
     var p = go.call(el);
     if (p && p.catch) p.catch(function () {});
   }
+  // Keep the TV's screensaver off. Newer browsers have a screen wake lock; the TV's old one doesn't, but many TVs hold
+  // off the screensaver while a video plays, so a 1-pixel, muted, looping, blank video plays here (keepawake.mp4, the
+  // clip from NoSleep.js, MIT). It lives in this page, so the office's reloads don't stop it. Some browsers only play
+  // video after a click or key, so the office calls keepAwake() on each one (and we retry every minute).
+  var wake = document.createElement('video'), lock = null;
+  wake.src = 'keepawake.mp4'; wake.muted = true;
+  wake.setAttribute('muted', ''); wake.setAttribute('loop', ''); wake.setAttribute('playsinline', '');
+  wake.style.cssText = 'position:fixed;left:0;bottom:0;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:1';
+  document.body.appendChild(wake);
+  function keepAwake() {
+    if (navigator.wakeLock && !lock) {
+      lock = navigator.wakeLock.request('screen');
+      lock.then(function (l) { l.addEventListener('release', function () { lock = null; }); }, function () { lock = null; });
+    }
+    if (wake.paused) { var p = wake.play(); if (p && p.catch) p.catch(function () {}); }
+  }
+  window.keepAwake = keepAwake;
+  keepAwake();   // muted video may autoplay without a click
+  setInterval(keepAwake, 60000);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) keepAwake(); });
+  document.addEventListener('click', keepAwake);
   // a key that lands here instead of in the office (it hasn't taken focus yet): Enter / F still toggle fullscreen
   document.addEventListener('keydown', function (e) {
+    keepAwake();
     if (e.keyCode === 13 || e.keyCode === 70) toggle();
     try { f.contentWindow.focus(); } catch (err) {}
   });

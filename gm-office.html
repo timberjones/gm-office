@@ -3196,6 +3196,11 @@ cv.addEventListener('mousemove', e => {
 function shellDoc_() {
   try { return window.parent !== window && parent.FRAME_SHELL ? parent.document : null; } catch (e) { return null; }
 }
+// The frame page keeps the TV's screensaver off with a tiny looping video, which some browsers only start on a click
+// or key: pass each one on (it's a no-op once the video is playing)
+function wakeShell_() { try { if (shellDoc_() && parent.keepAwake) parent.keepAwake(); } catch (e) {} }
+addEventListener('click', wakeShell_, true);
+addEventListener('keydown', wakeShell_, true);
 function toggleFullscreen_(own) {
   const fs = x => x && (x.fullscreenElement || x.webkitFullscreenElement), sd = own ? null : shellDoc_();
   const on = fs(document) ? document : fs(sd) ? sd : null;
