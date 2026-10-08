@@ -841,6 +841,7 @@ const KNOWN = {
 // else until their actions are defined). The page sends { t: 'act', a: id }; the leading screen plays it (doAction_).
 const ACTIONS = {
   2372: [{ id: 'stare', label: 'Stare', key: 'e', hint: 'stare' }],   // eyes pop (drawStare_)
+  2210: [{ id: 'food', label: 'Food', key: 'e', hint: 'call a food delivery' }],   // the courier comes in with a bag (courierPending)
   2350: [{ id: 'dogs', label: 'Dogs', key: 'e', hint: 'call or send home the dogs', lines: ['I miss my dogs', 'Time for doggo nap time'] }],   // summon the poodles / send them home
 };
 // @shared-end
@@ -1429,8 +1430,9 @@ function* courierLife() {
     if (!townhallNow_() && (courierPending || (h >= 11 && h < 14 && anyone && chance(0.5)))) {
       courierPending = false;
       yield* courierVisit();
-      yield rnd(1200, 3000);   // 20-50 min until the next one could come
-    } else yield rnd(300, 900);
+      const until = TIME + rnd(1200, 3000);   // 20-50 min until the next one could come (sooner if 2210 calls one)
+      yield () => courierPending || TIME >= until;
+    } else { const until = TIME + rnd(300, 900); yield () => courierPending || TIME >= until; }
   }
 }
 let courierLooks = null, waterLooks = null;
@@ -2412,6 +2414,7 @@ function doAction_(uid, a) {   // only ids that have that action (clones too); f
   const list = ACTIONS[baseUid_(uid)] || [], hit = workerOf_(uid), w = hit && hit[0];
   if (!w || !w.present || w.hidden || !list.some(x => x.id === a)) return;
   if (a === 'stare' && !(w.stareUntil > TIME)) w.stareUntil = TIME + STARE_SECS;
+  if (a === 'food' && !courier.present && !townhallNow_()) courierPending = true;   // courierLife sends one right away
   if (a === 'dogs' && TIME - (w.dogsT || -1e9) > 3) {   // the poodles' owner: dogs in -> they go home; none in -> they come
     w.dogsT = TIME;
     const [come, go] = ACTIONS[baseUid_(uid)][0].lines, here = dogs.filter(d => d.present);
