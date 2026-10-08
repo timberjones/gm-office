@@ -92,11 +92,11 @@
     touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   .pad button { border: 1px solid var(--line); border-radius: 12px; background: var(--pad); font-size: 1.4rem; cursor: pointer; touch-action: none; display: flex; align-items: center; justify-content: center; }
   .pad button.on { background: var(--pad-press); color: var(--accent-ink); }
-  .pad .sit, .pad .talk { font-size: 0.8rem; font-weight: 600; border-radius: 50%; }
+  .pad .sit, .pad .talk, .pad .act { font-size: 0.8rem; font-weight: 600; border-radius: 50%; }
   @media (max-width: 599px) {   /* phones: a big d-pad for thumbs */
     .pad { grid-template-columns: repeat(3, 76px); grid-template-rows: repeat(3, 76px); gap: 8px; margin-top: 16px; }
     .pad button { font-size: 1.8rem; border-radius: 16px; }
-    .pad .sit, .pad .talk { font-size: 0.95rem; }
+    .pad .sit, .pad .talk, .pad .act { font-size: 0.95rem; }
   }
   /* secret washroom trivia */
   .trivia { position: fixed; inset: 0; background: rgba(20, 14, 10, 0.55); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 10; }
@@ -116,7 +116,7 @@
   .tbig { font-size: 3rem; font-weight: 800; text-align: center; margin: 4px 0 0 !important; }
   .trow { display: flex; gap: 8px; }
   .trow .btn { flex: 1; }
-  .pad .up { grid-area: 1 / 2; } .pad .left { grid-area: 2 / 1; } .pad .sit { grid-area: 2 / 2; } .pad .right { grid-area: 2 / 3; } .pad .down { grid-area: 3 / 2; } .pad .talk { grid-area: 3 / 3; }
+  .pad .up { grid-area: 1 / 2; } .pad .left { grid-area: 2 / 1; } .pad .sit { grid-area: 2 / 2; } .pad .right { grid-area: 2 / 3; } .pad .down { grid-area: 3 / 2; } .pad .talk { grid-area: 3 / 3; } .pad .act { grid-area: 3 / 1; }
 </style>
 </head>
 <body>
@@ -156,6 +156,7 @@
     <button class="left" data-dir="left" aria-label="Left">◀</button>
     <button class="sit" id="sitBtn" aria-label="Sit or stand">Sit</button>
     <button class="talk" id="talkBtn" aria-label="Say something">Talk</button>
+    <button class="act hidden" id="actBtn"></button>
     <button class="right" data-dir="right" aria-label="Right">▶</button>
     <button class="down" data-dir="down" aria-label="Down">▼</button>
   </div>
@@ -209,7 +210,7 @@ const SEX_STYLES = { m: ['short', 'spiky'], f: ['long', 'bun'] };
 function startLook(uid) {
   if (uid === DOG_ID) return Object.assign({}, DOG_LOOK);   // easter egg: 101 Dalmatians
   const k = knownSeat(uid), base = k && k[1] ? k[1] : randomLook();
-  const l = Object.assign({ hat: null, beard: false, goatee: false, build: null }, base);
+  const l = Object.assign({ hat: null, beard: false, goatee: false, glasses: false, build: null }, base);
   if (!l.sex) l.sex = SEX_STYLES.f.includes(l.style) ? 'f' : 'm';
   return l;
 }
@@ -231,7 +232,10 @@ function startAs(uid) {
   $('who').textContent = me.dog ? "Woof! You're the office dog" : (k ? 'User ' : 'New person ') + uid;
   $('sitBtn').setAttribute('aria-label', me.dog ? 'Bark' : 'Sit or stand');
   $('talkBtn').classList.toggle('hidden', !!me.dog);   // the dog has its Woof button instead
-  $('hint').textContent = me.dog ? 'Tap or hold the arrows · keyboard: arrows / WASD, Space to woof' : 'Tap or hold the arrows · keyboard: arrows / WASD, Space to sit, T to talk';
+  const act = myAction();   // an extra button only for ids with an action (ACTIONS in gm-office.html)
+  $('actBtn').classList.toggle('hidden', !act);
+  if (act) { $('actBtn').textContent = act.label; $('actBtn').setAttribute('aria-label', act.label); }
+  $('hint').textContent = me.dog ? 'Tap or hold the arrows · keyboard: arrows / WASD, Space to woof' : 'Tap or hold the arrows · keyboard: arrows / WASD, Space to sit, T to talk' + (act ? ', ' + act.key.toUpperCase() + ' to ' + (act.hint || act.label.toLowerCase()) : '');
   $('pick').classList.add('hidden'); $('play').classList.remove('hidden');
   buildLooksUI(); updateWhere();
   relay.stop = false; relayConnect();
@@ -271,6 +275,15 @@ function queueStep(dir) {
 function talk() {   // the office picks one of your lines (yours, else your group's) and your character says it
   if (!me || me.dog) return;
   if (send({ t: 'talk' })) flashWhere('Talking...');
+}
+// your id's action (ACTIONS, shared from gm-office.html): the leading screen plays it for everyone
+const myAction = () => me && !me.dog ? (ACTIONS[String(me.uid).replace(/c\d+$/, '')] || [])[0] || null : null;
+let actAt = 0;
+function doAction() {
+  const act = myAction();
+  if (!act || Date.now() - actAt < 2500) return;
+  actAt = Date.now();
+  if (send({ t: 'act', a: act.id })) flashWhere(act.label + '...');
 }
 function sitOrStand() {
   if (me && me.dog) { send({ t: 'bark' }); flashWhere('Woof!'); return; }   // dogs don't sit in chairs: they bark
@@ -426,6 +439,7 @@ function buildLooksUI() {
   group('face');
   row('Face', o => segs(o, [['none', 'None'], ['beard', 'Beard'], ['goatee', 'Goatee']], () => L.beard ? 'beard' : L.goatee ? 'goatee' : 'none',
     v => upd({ beard: v === 'beard', goatee: v === 'goatee' }), v => L.sex === 'f' && v !== 'none'));
+  row('Glasses', o => segs(o, [[false, 'No'], [true, 'Yes']], () => !!L.glasses, v => upd({ glasses: v })));
   row('Cap', o => swatches(o, withCurrent(PALETTE.hat, L.hat), () => L.hat || null, col => upd({ hat: col }), true));
   group('clothes');
   row('Shirt', o => swatches(o, withCurrent(PALETTE.shirt, L.shirt), () => L.shirt, col => upd({ shirt: col })));
@@ -491,7 +505,7 @@ function relayConnect() {
     if (m.trivia) todayBest = m.trivia;
     const saved = m.looks && m.looks[me.uid];
     if (saved && !me.lookTouched && !!saved.dog === me.dog) {
-      me.look = me.dog ? Object.assign({}, saved) : Object.assign({ hat: null, beard: false, goatee: false, build: null, sex: 'm' }, saved);
+      me.look = me.dog ? Object.assign({}, saved) : Object.assign({ hat: null, beard: false, goatee: false, glasses: false, build: null, sex: 'm' }, saved);
       me.frames = framesFor_(me.look); buildLooksUI();
     } else if (!saved && !me.home && !me.lookTouched) sendLook();   // someone new: their starting look is what the TV shows
   };
@@ -623,6 +637,7 @@ addEventListener('keydown', e => {
   if (e.repeat) return;
   if (dir) press(dir); else if (k === ' ') sitOrStand();   // Space = the Sit / Stand button
   else if (k === 't') talk();   // T = the Talk button
+  else if (myAction() && k === myAction().key) doAction();   // e.g. E = Stare
 });
 addEventListener('keyup', e => {
   if (!me || e.target.tagName === 'INPUT') return;
@@ -639,6 +654,7 @@ for (const b of document.querySelectorAll('.pad [data-dir]')) {
 }
 $('sitBtn').addEventListener('click', sitOrStand);
 $('talkBtn').addEventListener('click', talk);
+$('actBtn').addEventListener('click', doAction);
 $('tClose').addEventListener('click', closeTrivia);
 $('idForm').addEventListener('submit', e => { e.preventDefault(); startAs($('idInput').value); });
 $('newBtn').addEventListener('click', () => startAs(newId()));

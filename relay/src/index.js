@@ -45,7 +45,7 @@ function cleanLook(l, uid) {   // only the fields gm-office.html draws, checked;
   return {
     hair: l.hair.toLowerCase(), shirt: l.shirt.toLowerCase(), pants: l.pants.toLowerCase(),
     skin: Math.max(0, Math.min(4, l.skin | 0)), style: STYLES.includes(l.style) ? l.style : 'short',
-    sex: l.sex === 'f' ? 'f' : 'm', beard: !!l.beard, goatee: !!l.goatee && !l.beard,
+    sex: l.sex === 'f' ? 'f' : 'm', beard: !!l.beard, goatee: !!l.goatee && !l.beard, glasses: !!l.glasses,
     hat: HEX.test(l.hat) ? l.hat.toLowerCase() : null, build: ['tall', 'small'].includes(l.build) ? l.build : null,
   };
 }
@@ -219,11 +219,17 @@ export class Office extends DurableObject {
     if (++a.n > MAX_PER_SEC) { ws.serializeAttachment(a); return; }
     let m;
     try { m = JSON.parse(raw); } catch (e) { return; }
-    if (!m || !['hello', 'step', 'hb', 'look', 'bark', 'score', 'hide', 'talk'].includes(m.t)) return;   // bark: the dog's Woof button
+    if (!m || !['hello', 'step', 'hb', 'look', 'bark', 'score', 'hide', 'talk', 'act'].includes(m.t)) return;   // bark: the dog's Woof button
     if (m.t === 'score') { ws.serializeAttachment(a); return this.postScore_(ws, a, m.n); }   // trivia: not passed on as-is
     if (m.t === 'talk') {   // the Talk button: the leading screen picks one of their lines and says it for everyone
       const L = this.leader_();
       if (L) try { L.send(JSON.stringify({ t: 'talk', uid: a.uid })); } catch (e) {}
+      ws.serializeAttachment(a); return;
+    }
+    if (m.t === 'act') {   // an action button (e.g. Stare): the leading screen checks the id may do it and plays it
+      if (typeof m.a !== 'string' || !/^[a-z]{1,16}$/.test(m.a)) return;
+      const L = this.leader_();
+      if (L) try { L.send(JSON.stringify({ t: 'act', uid: a.uid, a: m.a })); } catch (e) {}
       ws.serializeAttachment(a); return;
     }
     if (m.t === 'hide') {   // gone into the washroom (trivia) or back out: only pages that understand it (v2) hear it

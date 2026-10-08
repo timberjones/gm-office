@@ -837,6 +837,12 @@ const KNOWN = {
   'floater': [{ uid: 1426, look: { hair: '#6b4a2a', skin: 0, shirt: '#d97757', pants: '#2f3a5c', style: 'long' } }],   // no seat: see ROLES.floater
   'bar-1': [{ uid: 2679, look: { hair: '#2a1a14', skin: 2, shirt: '#5b6a95', pants: '#2a2238', style: 'short', goatee: true } }],
 };
+// Extra buttons on gm-user.html beyond walk / sit / talk, by user id. Only these ids get them (TJ 2026-10-07: nobody
+// else until their actions are defined). The page sends { t: 'act', a: id }; the leading screen plays it (doAction_).
+const ACTIONS = {
+  2372: [{ id: 'stare', label: 'Stare', key: 'e', hint: 'stare' }],   // eyes pop (drawStare_)
+  2350: [{ id: 'dogs', label: 'Dogs', key: 'e', hint: 'call or send home the dogs', lines: ['I miss my dogs', 'Time for doggo nap time'] }],   // summon the poodles / send them home
+};
 // @shared-end
 function makeWorker_(seat, i, role, lazyLook) {
   role = role || seat.role;
@@ -1170,12 +1176,13 @@ function* loiter(w) {   // no seat: drift around inside the entrance, and now an
   if (chance(0.15)) sayLine_(w, 'Where do I sit?', false);
   yield rnd(6, 16);
 }
-// Walks the floor and stops behind 2-4 people working at their desks to watch their screens: a beat to look over
-// the shoulder, then the eyes pop for STARE_SECS (drawStare_), then a few more seconds of watching. Not the offices.
+// Walks the floor and stops behind 2-4 people working at their desks to watch how they work: two cells back (clear of
+// their chair, eyes and all), a beat, then the eyes pop wide for STARE_SECS (drawStare_), then a few more seconds of
+// watching. Just observing, not bossing. Not the offices.
 const STARE_SECS = 2.2;
 const BEHIND = { right: [-1, 0], left: [1, 0], down: [0, -1], up: [0, 1] };
 function behindCell_(s) {
-  const d = BEHIND[s.face], x = s.x + d[0], y = s.y + d[1];
+  const d = BEHIND[s.face], x = s.x + 2 * d[0], y = s.y + 2 * d[1];
   return x >= 6 && y >= 9 && x < GX && y < GY && !blocked[idx(x, y)] && !isSeat[idx(x, y)]
     && !workers.some(q => q.present && q.tx === x && q.ty === y) ? [x, y] : null;
 }
@@ -1189,8 +1196,8 @@ function* prowl(w) {
     const o = pick(cands), cell = behindCell_(o.home);
     if (!(yield* walkTo(w, cell[0], cell[1])) || !working(o)) { yield rnd(1, 2); continue; }
     const d = BEHIND[o.home.face];
-    w.pose = 'stand'; w.dir = o.home.face;   // over their shoulder, looking at the same screen
-    w.px += d[0] * 3; w.py += d[1] * 3 - (d[0] ? 4 : 0);   // a step back and peering over the shoulder, not in their lap
+    w.pose = 'stand'; w.dir = o.home.face;   // looking past them at the same screen
+    w.px += d[0] * 6; w.py += d[1] * 6;      // a little further back: the big eyes stay clear of their chair and head
     yield rnd(0.8, 1.6);
     if (working(o)) { w.stareUntil = TIME + STARE_SECS; yield rnd(4, 8); }
     w.px = w.tx * C8; w.py = w.ty * C8;
@@ -1368,7 +1375,7 @@ function* waitOrFollow(d, secs) { const until = TIME + secs; yield () => d.follo
 function* dogLife(d, other) {
   yield* waitOrFollow(d, rnd(30, 400));
   for (;;) {
-    if (d.follow) { d.follow = false; yield rnd(1.5, 4); yield* dogVisit(d); continue; }
+    if (d.follow) { d.follow = false; yield rnd(1.5, 4); yield* dogVisit(d); yield* waitOrFollow(d, rnd(600, 2400)); continue; }   // then a long while before the next drop-in (not right back after being sent home)
     if (dogTime() && chance(0.35)) {
       if (!other.present && chance(0.6)) other.follow = true;   // usually they come as a pair
       yield* dogVisit(d);
@@ -1381,17 +1388,21 @@ function* dogVisit(d) {
   Object.assign(d, { present: true, px: hallX(), py: row * C8, tx: -1, ty: -1, pose: 'walk' });
   yield* walkStraight(d, 0, row * C8, SPD);
   d.tx = 0; d.ty = row;
-  const end = TIME + rnd(180, 600);
-  while (TIME < end && dogTime()) {     // trot around, stop and sniff, trot on; mostly stay close to their owner (2350)
+  const summoned = d.summoned, end = TIME + (summoned ? 1800 : rnd(180, 600));   // called in by their owner: stay while she's in
+  d.summoned = false; d.dismiss = false;
+  const ownerIn = () => workers.some(w => w.v.dogOwner && w.present);
+  while (!d.dismiss && TIME < end && (summoned ? ownerIn() : dogTime())) {     // trot around, stop and sniff, trot on; mostly stay close to their owner (2350)
     const owner = workers.find(w => w.v.dogOwner && w.present && !w.hidden && w.px >= 0);
     const near = owner ? FLOOR.filter(([fx, fy]) => Math.abs(fx - owner.tx) + Math.abs(fy - owner.ty) <= 3) : [];
     const toOwner = near.length && chance(0.8), [x, y] = toOwner ? pick(near) : pick(FLOOR);
     yield* walkTo(d, x, y, SPD);
-    d.pose = 'stand'; yield toOwner ? rnd(4, 12) : rnd(0.5, 4);   // hang around her desk a while
+    d.pose = 'stand';
+    const until = TIME + (toOwner ? rnd(4, 12) : rnd(0.5, 4));   // hang around her desk a while
+    yield () => d.dismiss || TIME >= until;
   }
   yield* walkTo(d, 0, row, SPD);
   yield* walkStraight(d, hallX(), row * C8, SPD);
-  d.present = false; d.bubble = null; d.tx = -1; d.ty = -1;
+  d.present = false; d.bubble = null; d.tx = -1; d.ty = -1; d.dismiss = false;
 }
 function drawDog(d) {
   const X = snap(d.px), Y = snap(d.py), F = d.frames, f = d.pose === 'walk' && Math.floor(d.walkT * 10) % 2 ? 'B' : 'A';
@@ -2229,7 +2240,7 @@ function drawPerson(w) {
   w.headX = sx + 6; w.headTop = sy + 1;
   if (w.headset) cachedOps_(w.hsCache || (w.hsCache = {}), () => drawHeadset(sx, sy + 1, view));
   if (w.angryUntil > TIME) drawAngry_(sx, sy, view);
-  if (w.stareUntil > TIME && !w.seated) stares.push([sx, sy, view, STARE_SECS - (w.stareUntil - TIME)]);   // drawn over everyone (see drawScene)
+  if (w.stareUntil > TIME) stares.push([sx, sy, view, STARE_SECS - (w.stareUntil - TIME)]);   // drawn over everyone (see drawScene)
   if (w.jug && !w.seated) {   // big blue water jug
     const jx = w.dir === 'left' ? sx - 3 : w.dir === 'down' ? sx + 3 : sx + 9, jy = sy + 6;
     R(jx - 1, jy - 1, 7, 10, OUT); R(jx, jy + 2, 5, 7, '#7fb8e8'); R(jx + 1, jy, 3, 2, '#3b6fd6');
@@ -2247,36 +2258,28 @@ function drawAngry_(sx, sy, view) {   // red in the face, and a pulsing cartoon 
   const mark = big ? ['.X.X.', 'XX.XX', '.....', 'XX.XX', '.X.X.'] : ['X.X', '...', 'X.X'];
   mark.forEach((row, j) => { for (let i = 0; i < row.length; i++) if (row[i] === 'X') P(x + i, y + j, red); });
 }
-// Staring at someone's screen: comically big eyes with pinprick pupils and a hard frown. They pop (with a little
-// overshoot), tremble while held, and shrink back at the end. t = seconds since the stare began.
+// Watching someone work: comically big round eyes behind the glasses, wide and curious (no frown: observing, not
+// bossing). They pop with a little overshoot, hold, and shrink back at the end. t = seconds since the stare began.
 const stares = [];
 function drawStare_(sx, sy, view, t) {
   if (view === 'up') return;   // seen from behind
   const k = t < 0.18 ? t / 0.18 * 1.25 : t < 0.32 ? 1.25 - (t - 0.18) / 0.14 * 0.25 : t > STARE_SECS - 0.25 ? Math.max(0, (STARE_SECS - t) / 0.25) : 1;
   if (k <= 0) return;
   const q = 1 / SS, sn = v => Math.round(v * SS) / SS;   // crisp: whole scene pixels, no anti-aliased edges
-  const r = 3.2 * k, jx = ((TIME * 14 | 0) % 2) * q, look = view === 'right' ? 1 : view === 'left' ? -1 : 0;
+  const r = 3.2 * k, look = view === 'right' ? 1 : view === 'left' ? -1 : 0;
   const eyes = view === 'down' ? [sx + 2.5, sx + 9.5] : [view === 'right' ? sx + 10.5 : sx + 1.5];
   const cy = sn(sy + 6.5);
-  const half = (rad, y) => sn(Math.sqrt(Math.max(0, rad * rad - y * y)));
-  const disc = (cx, y0, rad, c) => { g.fillStyle = c; for (let y = -rad; y < rad; y += q) { const hw = half(rad, y + q / 2); if (hw > 0) g.fillRect(cx - hw, sn(y0 + y), hw * 2, q); } };
-  for (let n = 0; n < eyes.length; n++) {
-    const cx = sn(eyes[n]) + jx, R0 = r + 0.75, inward = view === 'down' ? (n ? -1 : 1) : look;   // the nose side
-    disc(cx, cy, R0, '#8a91a3');   // glasses rim
+  const disc = (cx, y0, rad, c) => {
+    g.fillStyle = c;
+    for (let y = -rad; y < rad; y += q) { const hw = sn(Math.sqrt(Math.max(0, rad * rad - (y + q / 2) * (y + q / 2)))); if (hw > 0) g.fillRect(cx - hw, sn(y0 + y), hw * 2, q); }
+  };
+  for (const ex of eyes) {
+    const cx = sn(ex);
+    disc(cx, cy, r + 0.75, '#8a91a3');   // glasses rim
     disc(cx, cy, r, '#fdfcf6');
-    g.fillStyle = '#d9453b'; g.fillRect(sn(cx - inward * r * 0.85), sn(cy + r * 0.2), sn(inward * r * 0.4), q); g.fillRect(sn(cx - inward * r * 0.7), sn(cy + r * 0.55), sn(inward * r * 0.25), q);   // bloodshot
-    const px = sn(cx + look * r * 0.4), pr = Math.max(0.75, r * 0.32);
-    disc(px, cy + q, pr, '#1f1820');
-    g.fillStyle = '#ffffff'; g.fillRect(sn(px - pr * 0.5), sn(cy + q - pr * 0.5), q, q);   // glint
-    if (k >= 0.9) {   // a hard frown: the lid comes down toward the nose
-      g.fillStyle = '#2a2630';
-      const top = cy - R0, bot = cy - r * 0.05, outer = cx - inward * R0;
-      for (let y = top; y < bot; y += q) {
-        const hw = half(R0, y - cy + q / 2), xl = outer + inward * 2 * R0 * (y - top) / (bot - top);
-        const a = Math.max(cx - hw, Math.min(xl, cx + inward * R0)), b = Math.min(cx + hw, Math.max(xl, cx + inward * R0));
-        if (b > a) g.fillRect(sn(a), sn(y), sn(b - a), q);
-      }
-    }
+    const px = sn(cx + look * r * 0.35), pr = Math.max(0.75, r * 0.42);   // big round pupils: interested
+    disc(px, cy, pr, '#1f1820');
+    g.fillStyle = '#ffffff'; g.fillRect(sn(px - pr * 0.45), sn(cy - pr * 0.55), q, q);   // glint
   }
 }
 function groundShadow_(cx, cy, rx) {   // soft oval shadow at the feet (light comes from the top-left)
@@ -2405,6 +2408,17 @@ function speechFor_(uid) {
 // The Talk button on gm-user.html: one line for that character, by the usual rules: their own lines (work numbers and
 // their One-liners rows) first; else their group's (a role code like 'am', or a role's fixed lines); else the 'all'
 // lines if their role talks at all (interns, HR, product and the like don't); else nothing. At most every 2 s.
+function doAction_(uid, a) {   // only ids that have that action (clones too); followers see it in the snapshots
+  const list = ACTIONS[baseUid_(uid)] || [], hit = workerOf_(uid), w = hit && hit[0];
+  if (!w || !w.present || w.hidden || !list.some(x => x.id === a)) return;
+  if (a === 'stare' && !(w.stareUntil > TIME)) w.stareUntil = TIME + STARE_SECS;
+  if (a === 'dogs' && TIME - (w.dogsT || -1e9) > 3) {   // the poodles' owner: dogs in -> they go home; none in -> they come
+    w.dogsT = TIME;
+    const [come, go] = ACTIONS[baseUid_(uid)][0].lines, here = dogs.filter(d => d.present);
+    if (here.length) { here.forEach(d => { d.dismiss = true; }); say_(w, go, 3 + go.length * 0.06, true); }
+    else { dogs.forEach(d => { d.summoned = true; d.follow = true; }); say_(w, come, 3 + come.length * 0.06, true); }
+  }
+}
 function talkFor_(uid) {
   const hit = workerOf_(uid), w = hit && hit[0];
   if (!w || !w.present || w.hidden || w.isDog || TIME - (w.talkT || -1e9) < 2) return;
@@ -2832,6 +2846,7 @@ function onRelay_(m) {
   if (m.t === 'peers') { syncPeers = m.n | 0; if (syncMode === 'lead' && syncPeers) sendSnap_(); return; }
   if (m.t === 'snap') { if (syncMode === 'follow') applySnap_(m); return; }
   if (m.t === 'talk') { if (syncMode !== 'follow') talkFor_(m.uid); return; }   // the Talk button on gm-user.html
+  if (m.t === 'act') { if (syncMode !== 'follow') doAction_(m.uid, m.a); return; }   // an ACTIONS button on gm-user.html
   if (m.t === 'whereq') {   // someone opened their id on gm-user.html: where is their character right now?
     if (syncMode === 'lead') {
       const hit = workerOf_(m.uid), w = hit && hit[0];
@@ -2971,6 +2986,7 @@ function okText_(t) {   // only lines this page could have said itself, so a for
     okFeed = feed;
     const all = [].concat(CLICK_LINES, [ANGRY_LINE, WOOF, CFO_LINE], GREETINGS.morning, GREETINGS.bye, COURIER_LINES, WATER_LINES);
     for (const k in ROLES) if (ROLES[k].lines) all.push(...ROLES[k].lines);
+    for (const k in ACTIONS) for (const a of ACTIONS[k]) if (a.lines) all.push(...a.lines);
     if (feed) for (const e of feed.feed) if (Array.isArray(e.speech)) all.push(...e.speech);
     okTexts = new Set(all.concat(all.map(x => String(x).toUpperCase())));
   }
