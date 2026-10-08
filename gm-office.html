@@ -2406,10 +2406,15 @@ function speechFor_(uid) {
   const e = feed.feed.find(x => String(x.user_id) === String(uid));
   return e && Array.isArray(e.speech) ? e.speech.filter(Boolean) : [];
 }
+function ownLinesFor_(uid) {   // just their One-liners rows (feed 'lines'); an older feed without it: all their speech
+  if (!feed) return [];
+  const e = feed.feed.find(x => String(x.user_id) === String(uid));
+  return !e ? [] : Array.isArray(e.lines) ? e.lines.filter(Boolean) : speechFor_(uid);
+}
 // Who speaks: someone in the office with their own lines (it's their turn at a shared seat), or anyone for "all" lines.
-// The Talk button on gm-user.html: one line for that character, by the usual rules: their own lines (work numbers and
-// their One-liners rows) first; else their group's (a role code like 'am', or a role's fixed lines); else the 'all'
-// lines if their role talks at all (interns, HR, product and the like don't); else nothing. At most every 2 s.
+// The Talk button on gm-user.html: one line for that character (TJ 2026-10-08): their own One-liners rows first; else
+// their group's (a role code like 'am', or a role's fixed lines); else their work numbers; else the 'all' lines if
+// their role talks at all (interns, HR, product and the like don't); else nothing. At most every 2 s.
 function doAction_(uid, a) {   // only ids that have that action (clones too); followers see it in the snapshots
   const list = ACTIONS[baseUid_(uid)] || [], hit = workerOf_(uid), w = hit && hit[0];
   if (!w || !w.present || w.hidden || !list.some(x => x.id === a)) return;
@@ -2426,8 +2431,9 @@ function talkFor_(uid) {
   const hit = workerOf_(uid), w = hit && hit[0];
   if (!w || !w.present || w.hidden || w.isDog || TIME - (w.talkT || -1e9) < 2) return;
   const base = baseUid_(uid), R0 = ROLES[w.role] || {};
-  let lines = speechFor_(base);
+  let lines = ownLinesFor_(base);
   if (!lines.length) lines = speechFor_(w.role).concat(R0.lines || []);
+  if (!lines.length) lines = speechFor_(base);
   if (!lines.length && w.talk > 0 && w.role !== 'product') lines = speechFor_('all');
   if (!lines.length) return;
   w.talkT = TIME;
