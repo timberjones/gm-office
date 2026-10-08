@@ -859,7 +859,7 @@ function makeWorker_(seat, i, role, lazyLook) {
   });
   const v = variants[0], look = v.look;
   const w = {
-    i, look, role, acts: R0.acts, talk: R0.talk, fixed: !!R0.fixed, variants, v,
+    i, sid: role === 'hr' ? 'hr' : seat.code, look, role, acts: R0.acts, talk: R0.talk, fixed: !!R0.fixed, variants, v,
     frames: v.frames, home: seat, sitAt: null,
     px: seat.x * C8, py: seat.y * C8, tx: seat.x, ty: seat.y, dir: 'down',
     pose: 'stand', seated: false, present: false, hidden: false, held: false, summon: null, headset: false, walkT: 0, bubble: null,
@@ -3110,7 +3110,7 @@ function takeCharge_() {
 // out because the page started with the weekday guess); later on, people come and go on foot as usual.
 function rosterNow_() {
   pickRoster();
-  if (TIME > 15 || syncMode === 'follow') return;
+  if (TIME > 15 || syncMode === 'follow' || carried) return;   // after a reload the office carried on: changes walk in / out
   for (const w of workers) {
     if (w.ctl || w.visitor) continue;
     const want = wantPresent(w);
@@ -3123,7 +3123,32 @@ function rosterNow_() {
 buildSprites();
 buildLayers();
 buildDrawables();
-for (const w of workers) if (wantPresent(w)) { w.present = true; placeAtHome_(w); w.greeted = rosterKey; }   // already at work when the page opens (and already said good morning)
+// A reload (update, manual refresh) carries on from the page before it: the same people are in, with the same count,
+// and anyone the new page doesn't want walks out / anyone missing walks in, instead of the office swapping at once.
+const SNAP_KEY = 'gmOfficeSnap';
+function saveSnap_() {
+  try {
+    sessionStorage.setItem(SNAP_KEY, JSON.stringify({ at: Date.now(), day: zoneDay().key, count: liveCount,
+      in: workers.filter(w => w.present && !w.visitor).map(w => [w.sid, w.home.code]) }));
+  } catch (e) {}
+}
+addEventListener('pagehide', saveSnap_);
+const carried = (() => {
+  try {
+    const s = JSON.parse(sessionStorage.getItem(SNAP_KEY)); sessionStorage.removeItem(SNAP_KEY);
+    return s && Date.now() - s.at < 3 * 60 * 1000 && s.day === zoneDay().key && Array.isArray(s.in) ? s : null;
+  } catch (e) { return null; }
+})();
+if (carried) {
+  if (carried.count && liveCount == null) { liveCount = carried.count; pickRoster(); }   // the count it had, until the relay sends it again
+  const was = new Map(carried.in.map(a => [a[0], a[1]]));
+  for (const w of workers) {
+    if (!was.has(w.sid)) continue;
+    const d = w.floater && deskSeats.find(s => s.code === was.get(w.sid));   // floaters: back at the desk they had
+    if (d && deskFree_(d, w)) w.home = d;
+    w.present = true; placeAtHome_(w); w.greeted = rosterKey;
+  }
+} else for (const w of workers) if (wantPresent(w)) { w.present = true; placeAtHome_(w); w.greeted = rosterKey; }   // already at work when the page opens (and already said good morning)
 const extraCos = { roomba: new Co(roombaLife), dog0: new Co(() => dogLife(dogs[0], dogs[1])), dog1: new Co(() => dogLife(dogs[1], dogs[0])), courier: new Co(courierLife), water: new Co(waterLife) };
 const cos = [...workers.map(w => (w.co = new Co(() => life(w), w))), ...Object.values(extraCos)];
 if (!params.has('seed')) seed = (Math.random() * 1e9) | 0;
@@ -3259,6 +3284,7 @@ function checkForUpdate_() {
 function reloadFresh_() {   // a new ?v= so the browser can't hand back its cached copy (Pages lets it keep one 10 min)
   const q = location.search.replace(/([?&])v=[^&]*&?/, '$1').replace(/[?&]$/, '');
   // not inside the frame page yet (a TV opened before it existed): move into it, so fullscreen survives from then on
+  saveSnap_();
   const path = shellDoc_() || window.parent !== window ? location.pathname : location.pathname.replace(/gm-office\.html$/, 'index.html');
   location.replace(path + (q ? q + '&' : '?') + 'v=' + Date.now() + location.hash);
 }
