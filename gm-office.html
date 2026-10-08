@@ -112,7 +112,13 @@ function zoneNow() { const o = {}; for (const p of tzFmt.formatToParts(new Date(
 const dayFmt = new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'short', year: 'numeric', month: 'numeric', day: 'numeric' });
 const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 const DAY_PARAM = WEEKDAYS.includes((params.get('day') || '').toLowerCase().slice(0, 3)) ? params.get('day').toLowerCase().slice(0, 3) : null;
-function zoneDay() {   // weekday + date key in the office's time zone (?day=tue previews another weekday)
+let dayMemo = null, dayMemoAt = 0;
+function zoneDay() {   // weekday + date key in the office's time zone (?day=tue previews another weekday); worked out once a second at most (it's slow on a TV)
+  const now = Date.now();
+  if (dayMemo && now - dayMemoAt < 1000) return dayMemo;
+  dayMemoAt = now; return (dayMemo = zoneDay_());
+}
+function zoneDay_() {
   const o = {}; for (const p of dayFmt.formatToParts(new Date())) o[p.type] = p.value;
   return { wd: DAY_PARAM || o.weekday.toLowerCase().slice(0, 3), key: `${o.year}-${o.month}-${o.day}${DAY_PARAM ? '-' + DAY_PARAM : ''}` };
 }
@@ -2602,8 +2608,8 @@ function resize() {
   view = canvas(VW * SS, VH * SS); vctx = view.getContext('2d'); sceneCtx = vctx;
   lc.c = canvas(VW * SS, VH * SS); lc.x = lc.c.getContext('2d');
   exteriorDirty = true;
-  const cx = cv.width / 2, cy = cv.height / 2;
-  vig = mctx.createRadialGradient(cx, cy, Math.min(cv.width, cv.height) * 0.35, cx, cy, Math.max(cv.width, cv.height) * 0.7);
+  const vw = view.width, vh = view.height, cx = vw / 2, cy = vh / 2;   // the vignette is drawn on the scene (see render)
+  vig = vctx.createRadialGradient(cx, cy, Math.min(vw, vh) * 0.35, cx, cy, Math.max(vw, vh) * 0.7);
   vig.addColorStop(0, 'rgba(10,8,30,0)'); vig.addColorStop(1, 'rgba(10,8,30,0.35)');
 }
 let STATIC = [];
@@ -2670,18 +2676,21 @@ function render() {
   if (night > 0.2) for (const [x, y] of lampPositions()) lights.push({ x: x - OX, y: y - OY, r: 30, a: 0.75, c: '#ffd890' });
   lighting();
   g.setTransform(SS, 0, 0, SS, 0, 0);
-  // to the screen, then the lo-fi grade
-  mctx.imageSmoothingEnabled = false;
-  if (epxOn) { drawEpx_(); mctx.drawImage(epx.cv, 0, 0); } else mctx.drawImage(view, 0, 0, VW * scale, VH * scale);
+  // the lo-fi grade, on the scene before it's scaled up (the same look, ~4x fewer pixels than grading the screen)
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  const gw = view.width, gh = view.height;
   if (!CLASSIC) {   // cozy grade: a little less saturation, lifted shadows
-    mctx.globalCompositeOperation = 'saturation'; mctx.fillStyle = 'rgba(128,128,128,0.22)'; mctx.fillRect(0, 0, cv.width, cv.height);
-    mctx.globalCompositeOperation = 'screen'; mctx.fillStyle = 'rgba(60,44,30,0.10)'; mctx.fillRect(0, 0, cv.width, cv.height);
-    mctx.globalCompositeOperation = 'source-over';
+    g.globalCompositeOperation = 'saturation'; g.fillStyle = 'rgba(128,128,128,0.22)'; g.fillRect(0, 0, gw, gh);
+    g.globalCompositeOperation = 'screen'; g.fillStyle = 'rgba(60,44,30,0.10)'; g.fillRect(0, 0, gw, gh);
+    g.globalCompositeOperation = 'source-over';
   }
   if (LOFI) {
-    mctx.globalCompositeOperation = 'soft-light'; mctx.fillStyle = 'rgba(255,176,110,0.20)'; mctx.fillRect(0, 0, cv.width, cv.height);
-    mctx.globalCompositeOperation = 'source-over'; mctx.fillStyle = vig; mctx.fillRect(0, 0, cv.width, cv.height);
+    g.globalCompositeOperation = 'soft-light'; g.fillStyle = 'rgba(255,176,110,0.20)'; g.fillRect(0, 0, gw, gh);
+    g.globalCompositeOperation = 'source-over'; g.fillStyle = vig; g.fillRect(0, 0, gw, gh);
   }
+  // to the screen
+  mctx.imageSmoothingEnabled = false;
+  if (epxOn) { drawEpx_(); mctx.drawImage(epx.cv, 0, 0); } else mctx.drawImage(view, 0, 0, VW * scale, VH * scale);
   drawSecretArt_();   // the QR art, at whole screen pixels, after the grade (full contrast for phones)
   drawTriviaBest_();
   drawSpeech();
@@ -3300,7 +3309,7 @@ function frame(now) {
   if (document.hidden) return;
   if (dt > 0.25) dt = 0.25;
   acc += dt;
-  if (acc < STEP) return;
+  if (acc < STEP - 0.004) return;   // some slack: a frame a hair early (vsync jitter) still counts, else every other one is skipped and motion stutters
   const s = Math.min(acc, 0.12); acc = 0;
   try {
     const t0 = DEBUG ? performance.now() : 0;
