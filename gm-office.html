@@ -614,12 +614,13 @@ deskSeats.push(addSeat(7, 5, 'left', 'desk', { role: 'cfoteam', code: 'cfo-team'
 addSeat(21, 6, 'right', 'desk');   // COO's office second desk: nobody sits there
 const CEO_SIDE_DESK = addSeat(30, 6, 'right', 'desk');                // CEO office's second desk: the HR visitor sometimes sits here
 [11, 13, 15, 17].forEach((y, i) => deskSeats.push(addSeat(8, y, 'left', 'desk', { role: 'am', code: 'am-' + (i + 1) })));   // left wall: account managers
-const islandCount = { 'co-op': 0, buyer: 0 };
-for (const [l, r, role, pre] of [[14, 18, 'intern', 'co-op'], [24, 28, 'buyer', 'buyer'], [34, 38, 'buyer', 'buyer']])   // islands: co-ops (intern role), then plant buyers
+const islandCount = { 'co-op': 0, intern: 0, buyer: 0 };
+// islands: left one co-ops (left side) and interns (right side), both the quiet intern role; then plant buyers
+for (const [l, r, role, preL, preR] of [[14, 18, 'intern', 'co-op', 'intern'], [24, 28, 'buyer', 'buyer', 'buyer'], [34, 38, 'buyer', 'buyer', 'buyer']])
   for (const y of [11, 13, 15]) {
     const pt = l === 34 && y === 15;   // right-most island, bottom-left seat: product + tech, with an extra monitor
-    deskSeats.push(addSeat(l, y, 'right', 'desk', pt ? { role: 'product', code: 'product-1', extraMon: true } : { role, code: pre + '-' + (++islandCount[pre]) }));
-    deskSeats.push(addSeat(r, y, 'left', 'desk', { role, code: pre + '-' + (++islandCount[pre]) }));
+    deskSeats.push(addSeat(l, y, 'right', 'desk', pt ? { role: 'product', code: 'product-1', extraMon: true } : { role, code: preL + '-' + (++islandCount[preL]) }));
+    deskSeats.push(addSeat(r, y, 'left', 'desk', { role, code: preR + '-' + (++islandCount[preR]) }));
   }
 // right wall desk: three buyers squeezed in, three monitors (top 2342, middle 2155, bottom 2210)
 [[10, 'buyer-14'], [12, 'buyer-12'], [14, 'buyer-13']].forEach(([y, code]) => deskSeats.push(addSeat(45, y, 'right', 'desk', { role: 'buyer', code })));
@@ -835,7 +836,7 @@ const KNOWN = {
   'am-3': [{ uid: 2411, look: { hair: '#8a5a32', skin: 0, shirt: '#5b6a95', pants: '#2f3a5c', style: 'short' } }],   // white male
   'am-float': [{ uid: 1430, look: { hair: '#3a2a20', skin: 0, shirt: '#3b6fd6', pants: '#2f3a5c', style: 'short' } }],   // AM with no desk: CEO's second desk when free (see amFloater)
   'floater': [{ uid: 1426, look: { hair: '#6b4a2a', skin: 0, shirt: '#d97757', pants: '#2f3a5c', style: 'long' } }],   // no seat: see ROLES.floater
-  // left island: co-ops (intern role: they only speak if they have One-liners rows)
+  // left island, left side, top to bottom: co-ops (intern role: they only speak if they have One-liners rows)
   'co-op-1': [{ uid: 2425, look: { hair: '#1a1a24', skin: 3, shirt: '#8f2a2e', pants: '#2f3a5c', style: 'long' } }],   // black hair, dark red shirt
   'co-op-2': [{ uid: 2212, look: { hair: '#2a1a14', skin: 2, shirt: '#d9453b', pants: '#2f3a5c', style: 'long' } }],   // tanned, dark hair, red shirt
   'co-op-3': [{ uid: 2355, look: { hair: '#1a1a24', skin: 0, shirt: '#f3ecdf', pants: '#3a3f55', style: 'short' } }],   // black hair, white shirt
@@ -921,7 +922,7 @@ function assignOverflow_(want) {
   });
 }
 // A desk she can take: an island / wall desk whose owner isn't in today and that nobody is sitting at.
-const FLOAT_DESK = /^(buyer|co-op|am)-/;
+const FLOAT_DESK = /^(buyer|co-op|intern|am)-/;
 function freeDesk_(w, rf) {
   const ok = deskSeats.filter(s => FLOAT_DESK.test(s.code) && s !== w.home && deskFree_(s, w));
   return ok.length ? ok[Math.floor((rf || rand)() * ok.length)] : null;
