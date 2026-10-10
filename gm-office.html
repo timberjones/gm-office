@@ -1716,12 +1716,24 @@ function costumeOf_(w) {   // { kind, frames, top } for this person this season,
   }
   return holder.cos.kind ? holder.cos : null;
 }
-// little character maps drawn with P: O = outline, other letters from the palette
+// little character maps: O = outline, other letters from the palette. Each map + palette is painted once into a
+// tiny canvas and drawn from there (one drawImage instead of dozens of single-pixel fills every frame).
+const MAP_CACHE = new WeakMap();   // rows array -> palette key -> canvas
 function drawMap_(rows, x, y, pal, flip) {
-  for (let j = 0; j < rows.length; j++) for (let i = 0; i < rows[j].length; i++) {
-    const c = pal[rows[j][flip ? rows[j].length - 1 - i : i]];
-    if (c) P(x + i, y + j, c);
+  let byPal = MAP_CACHE.get(rows);
+  if (!byPal) MAP_CACHE.set(rows, byPal = new Map());
+  let key = flip ? 'f' : '';
+  for (const k in pal) key += k + pal[k];
+  let c = byPal.get(key);
+  if (!c) {
+    const w = Math.max(...rows.map(r => r.length)), x2 = (c = canvas(w, rows.length)).getContext('2d');
+    for (let j = 0; j < rows.length; j++) for (let i = 0; i < rows[j].length; i++) {
+      const col = pal[rows[j][flip ? rows[j].length - 1 - i : i]];
+      if (col) { x2.fillStyle = col; x2.fillRect(flip ? i + w - rows[j].length : i, j, 1, 1); }
+    }
+    byPal.set(key, c);
   }
+  g.drawImage(c, snap(x), snap(y));
 }
 const TOPS = {   // [rows, dx, dy (from the sprite's left / head top), palette]
   witch: [['.......OO.....', '......OHHO....', '.....OHHO.....', '....OHHHHO....', '....OHHHHO....', '...OHHHHHHO...', '...ObbbbbbO...',
@@ -1732,17 +1744,19 @@ const TOPS = {   // [rows, dx, dy (from the sprite's left / head top), palette]
   ears: [['..OO......OO..', '..OHO....OHO..', '..OHpO..OpHO..'], -1, -2, { H: '#1c1820', p: '#e88aa0' }],
   horns: [['..O........O..', '.OHO......OHO.', '.OHHO....OHHO.', '..OHHO..OHHO..'], -1, -3, { H: '#d9453b' }],
 };
+const COLLAR_SIDE = ['.O.', 'OK.', 'ORK', 'ORK'], COLLAR_FRONT = ['O..........O', 'OO........OO', '.RO......OR.', '.RRO....ORR.'];
+const BANDANA = ['....RRRRRR..', '...RRWRRWRR.', '..RRRRRRRRRR'], EYE_PATCH = ['.KKKKKKKKKK.', '..KK........', '..KK........'];
 function drawCostumeTop_(kind, sx, ht, view) {
   const pal = { O: OUT };
   if (TOPS[kind]) { const [rows, dx, dy, p] = TOPS[kind]; drawMap_(rows, sx + dx, ht + dy, Object.assign(pal, p), view === 'left'); return; }
   if (kind === 'collar') {   // the vampire's tall cape collar, red lining
     Object.assign(pal, { R: '#9a1a24', K: '#1a1420' });
-    if (view === 'right' || view === 'left') drawMap_(['.O.', 'OK.', 'ORK', 'ORK'], view === 'right' ? sx + 1 : sx + 8, ht + 5, pal, view === 'left');
-    else drawMap_(['O..........O', 'OO........OO', '.RO......OR.', '.RRO....ORR.'], sx, ht + 5, pal);
+    if (view === 'right' || view === 'left') drawMap_(COLLAR_SIDE, view === 'right' ? sx + 1 : sx + 8, ht + 5, pal, view === 'left');
+    else drawMap_(COLLAR_FRONT, sx, ht + 5, pal);
   } else if (kind === 'pirate') {   // red bandana with white dots; an eye patch on its strap
     Object.assign(pal, { R: '#d9453b', W: '#f3ecdf', K: '#1a1a24' });
-    drawMap_(['....RRRRRR..', '...RRWRRWRR.', '..RRRRRRRRRR'], sx - 1, ht, pal);
-    if (view === 'down') drawMap_(['.KKKKKKKKKK.', '..KK........', '..KK........'], sx, ht + 3, pal);
+    drawMap_(BANDANA, sx - 1, ht, pal);
+    if (view === 'down') drawMap_(EYE_PATCH, sx, ht + 3, pal);
     else if (view === 'right' || view === 'left') {
       const f = x => view === 'right' ? sx + x : sx + 11 - x;
       for (let i = 4; i <= 10; i++) P(f(i), ht + 3, pal.K);
