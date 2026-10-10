@@ -675,7 +675,6 @@ const SPOTS = {
 };
 const ACTS = [['type', 44], ['call', 22], ['walkcall', 4], ['chat', 5], ['meeting', 2], ['coffee', 6], ['water', 3], ['fridge', 2], ['sink', 2], ['wc', 3], ['island', 3]];
 const spotUser = (k, i) => SPOTS[k].spots[i] && SPOTS[k].spots[i].using;
-const DOCK = { x: 15, y: 27 };
 
 const FLOOR = [], AISLE = [];
 for (let y = 0; y < GY; y++) for (let x = 6; x < GX; x++) if (!blocked[idx(x, y)] && !isSeat[idx(x, y)]) { FLOOR.push([x, y]); if (y >= 9 && y <= 20) AISLE.push([x, y]); }
@@ -723,11 +722,11 @@ class Co {
 }
 // People don't walk through each other. Before each step a person checks the next cell: if someone stands there
 // (or is stepping into it) they wait; after a moment they route around; if there's no way around (two people face
-// to face in a narrow gap) they squeeze past after a few seconds, so nobody is ever stuck. Dogs and the roomba
-// slip past people.
-const isPerson_ = e => e === courier || e === waterGuy || (e.home && !dogs.includes(e));
+// to face in a narrow gap) they squeeze past after a few seconds, so nobody is ever stuck. Dogs slip past
+// people.
+const isPerson_ = e => e === courier || e === waterGuy || e === janitor || (e.home && !dogs.includes(e));
 function personIn_(x, y, me) {   // someone else standing in, or stepping into, cell (x, y)
-  for (const o of workers.concat(courier, waterGuy)) {
+  for (const o of workers.concat(courier, waterGuy, janitor)) {
     if (o === me || !o.present || o.hidden || o.seated) continue;
     if ((o.tx === x && o.ty === y) || (o.pose === 'walk' && o.nx === x && o.ny === y)) return o;   // a stale mark from an interrupted step doesn't count
   }
@@ -735,7 +734,7 @@ function personIn_(x, y, me) {   // someone else standing in, or stepping into, 
 }
 function peopleCells_(me) {   // cells taken by other people standing around, to route around
   const set = new Set();
-  for (const o of workers.concat(courier, waterGuy)) {
+  for (const o of workers.concat(courier, waterGuy, janitor)) {
     if (o === me || !o.present || o.hidden || o.seated || o.tx < 0) continue;
     set.add(idx(o.tx, o.ty)); if (o.pose === 'walk' && o.nx != null) set.add(idx(o.nx, o.ny));
   }
@@ -1345,16 +1344,6 @@ function* attendMeeting(w) {
   yield* goHome(w);
 }
 
-// robot vacuum: runs when the office is empty at night
-const roomba = { px: DOCK.x * C8, py: DOCK.y * C8, tx: DOCK.x, ty: DOCK.y, dir: 'down', walkT: 0, pose: 'stand' };
-function* roombaLife() {
-  for (;;) {
-    const h = world.hour, [, ss] = sunTimes(), empty = !workers.some(w => w.present);
-    if (empty && (h >= ss + 1 || h < 5)) { const [x, y] = pick(FLOOR); yield* walkTo(roomba, x, y, 12); yield rnd(0.3, 1.5); }
-    else { if (roomba.tx !== DOCK.x || roomba.ty !== DOCK.y) yield* walkTo(roomba, DOCK.x, DOCK.y, 12); yield 3; }
-  }
-}
-
 // ---------------------------------------------------------------- the toy poodles (one white, one brown) drop by now and then
 // W coat, S coat shade, e eye, n nose. They wander around the office for a while, leave, and come back later.
 // @shared-begin: gm-user.html loads the code between these markers (people + office layout), keep it page-agnostic
@@ -1555,6 +1544,114 @@ function sayLine_(w, text, force) {
   if (w.role === 'am') text = text.toUpperCase();
   say_(w, text, 3 + text.length * 0.06, true);
 }
+// ---------------------------------------------------------------- the night janitor (after dark, once everyone's gone)
+// Walks in from the hallway and mops his way around the office with the lights dimmed, headphones on, singing a bit
+// of a 90s / early 2000s pop song now and then. When someone checks in (another screen opens the office, this page
+// is opened or comes back into view, someone walks in from gm-user.html, or he's clicked) he stops, slides the
+// headphones down, asks who's there, looks around, and gets back to it. Leaves at 5 am, or when the first person arrives.
+const NOTE = '♪';
+const JANITOR_SONGS = ['Oops!... I did it again', 'Bye bye bye', "It's gonna be me", 'Tell me why... I want it that way',
+  '...baby one more time', "Livin' la vida loca", 'Spice up your life!', 'Genie in a bottle', 'Say my name, say my name',
+  'No scrubs', 'MMMBop', "Hey now, you're an all star", 'Who let the dogs out?', 'Hey ya!', 'Crazy in love',
+  'Larger than life', "Isn't it ironic?", "Don't speak", 'I get knocked down...', 'Toxic', "Everybody... Backstreet's back!",
+  'Barbie girl', 'Mr. Brightside', 'Since U been gone', 'Complicated', 'Wonderwall', 'Hmm hmm hmmm...'].map(s => NOTE + ' ' + s + ' ' + NOTE);
+const JANITOR_WHO = ["Hello? Who's there?", "Who's there?", "...Who's there?", "Hm? Who's there?"];
+const JANITOR_SHRUG = ['Huh. Must be the wind.', "Guess it's just me.", 'Just me and the mop, then.', 'Hello...? Okay then.', 'Spooky. Back to work.'];
+const JANITOR_LOOK = { hair: '#9aa4b0', skin: 2, shirt: '#4f6d8f', pants: '#3a3f55', style: 'short', beard: true };
+const janitor = { role: 'janitor', talk: 1, present: false, hidden: false, seated: false, headset: false, bag: false,
+  phones: true, mop: true, mopping: false, asking: false, leaving: false,
+  px: 0, py: 0, tx: -1, ty: -1, dir: 'right', walkT: 0, pose: 'stand', bubble: null, headX: 0, headTop: 0, v: {}, frames: null };
+const janitorTime_ = () => {   // after dark (an hour past sunset) until 5 am, while nobody from the team is in (people walking in from gm-user.html don't count)
+  const h = world.hour, [, ss] = sunTimes();
+  return (h >= ss + 1 || h < 5) && !workers.some(w => w.present && !w.ctl && !w.visitor);
+};
+const OFFICE_FLOOR = FLOOR.filter(([x]) => x >= 7);
+function placeJanitor_() {   // already at work when the page opens at night
+  const [x, y] = pick(OFFICE_FLOOR);
+  Object.assign(janitor, { frames: janitor.frames || framesFor_(JANITOR_LOOK), present: true, phones: true, mopping: true, px: x * C8, py: y * C8, tx: x, ty: y, pose: 'stand' });
+}
+function* janitorLife() {
+  for (;;) {
+    if (janitorTime_() || janitor.present) yield* janitorShift();
+    yield rnd(10, 30);
+  }
+}
+function* janitorShift() {
+  const J = janitor;
+  J.frames = J.frames || framesFor_(JANITOR_LOOK);
+  J.asking = false; J.leaving = false;
+  if (!J.present || J.px < 0) {
+    if (!janitorTime_()) { J.present = false; return; }
+    const row = chance(0.5) ? 25 : 26;
+    Object.assign(J, { present: true, phones: true, mopping: false, px: hallX(), py: row * C8, tx: -1, ty: -1, pose: 'walk' });
+    yield* walkStraight(J, 0, row * C8);
+    J.tx = 0; J.ty = row;
+  } else { J.tx = clamp(Math.round(J.px / C8), 0, GX - 1); J.ty = clamp(Math.round(J.py / C8), 0, GY - 1); }   // carry on from here (e.g. after asking who's there)
+  if (!(J.singT > 0)) J.singT = rnd(8, 20);
+  while (janitorTime_()) {
+    // mostly the next patch over, sometimes across the room
+    const near = OFFICE_FLOOR.filter(([x, y]) => Math.abs(x - J.tx) + Math.abs(y - J.ty) <= 7 && (x !== J.tx || y !== J.ty));
+    const [x, y] = near.length && !chance(0.15) ? pick(near) : pick(OFFICE_FLOOR);
+    J.mopping = false;
+    yield* walkTo(J, x, y, 14);
+    J.mopping = true;
+    yield rnd(2.5, 6);
+  }
+  J.mopping = false; J.leaving = true; J.phones = true;
+  const out = chance(0.5) ? 25 : 26;
+  yield* walkTo(J, 0, out);
+  yield* walkStraight(J, hallX(), out * C8);
+  J.present = false; J.leaving = false;
+}
+// "Who's there?" (gap: seconds since the last time he asked, so a burst of check-ins doesn't keep him at it)
+function janitorAsk_(gap) {
+  const J = janitor;
+  if (syncMode === 'follow' || !J.present || J.px < 0 || J.leaving || J.asking || TIME - (J.askT || -1e9) < gap) return;
+  J.askT = TIME; J.asking = true;
+  extraCos.janitor.restart(() => (function* () { yield* whoThere_(); yield* janitorShift(); })());
+}
+function* whoThere_() {
+  const J = janitor, line = (list, life) => { if (CHAT) say_(J, pick(list), life, true); };
+  J.mopping = false; J.pose = 'stand';
+  yield 0.4;
+  J.phones = false; J.dir = 'down';   // headphones down around the neck, turns to face you
+  yield 0.5;
+  line(JANITOR_WHO, 3.5);
+  yield 2.6;
+  J.dir = 'left'; yield 1; J.dir = 'right'; yield 1; J.dir = 'down'; yield 0.6;
+  line(JANITOR_SHRUG, 3.2);
+  yield 2.4;
+  J.phones = true; J.asking = false; J.singT = rnd(4, 10);
+}
+let janitorWhoAt = 0, janitorGuests = 0;
+function janitorStep_(dt) {   // the leading (or only) screen: songs, and anyone new walking in
+  const J = janitor, inside = J.present && J.px >= 0 && !J.leaving;
+  if (janitorWhoAt && TIME >= janitorWhoAt) { janitorWhoAt = 0; janitorAsk_(0); }
+  const guests = workers.filter(w => w.present && (w.ctl || w.visitor) && w.px >= 0).length;
+  if (guests > janitorGuests) janitorAsk_(15);
+  janitorGuests = guests;
+  if (inside && !J.asking && J.phones && CHAT && (J.singT -= dt) <= 0) {
+    J.singT = rnd(25, 55);
+    let text; do text = pick(JANITOR_SONGS); while (text === J.lastSong); J.lastSong = text;
+    say_(J, text, 5);
+  }
+}
+// wet floor where he's mopped: a faint sheen that dries over half a minute (worked out on every screen from where he is)
+const WET_SECS = 30, wet = [];
+function updateWet_() {
+  const J = janitor;
+  if (!(J.present && J.mopping && J.px >= 6 * C8)) return;
+  const x = Math.round(J.px / C8), y = Math.round(J.py / C8), cell = wet.find(c => c.x === x && c.y === y);
+  if (cell) cell.t = TIME; else { wet.push({ x, y, t: TIME }); if (wet.length > 60) wet.shift(); }
+}
+function drawWet_() {
+  for (let i = wet.length - 1; i >= 0; i--) {
+    const c = wet[i], k = 1 - (TIME - c.t) / WET_SECS;
+    if (k <= 0) { wet.splice(i, 1); continue; }
+    g.fillStyle = `rgba(170,210,245,${(0.22 * k).toFixed(3)})`; g.fillRect(c.x * C8 - 1, c.y * C8 + 2, C8 + 2, C8);
+    g.fillStyle = `rgba(255,255,255,${(0.3 * k).toFixed(3)})`; g.fillRect(c.x * C8 + 2, c.y * C8 + 4, 2, 1);
+  }
+}
 
 // ---------------------------------------------------------------- furniture sprites
 const SPR = {};
@@ -1663,9 +1760,8 @@ function buildLayers() {
   // rug under the lunch table
   const r = LUNCH_RUG;
   R(r.x0 * C8 + 2, r.y0 * C8 + 2, (r.x1 - r.x0 + 1) * C8 - 4, (r.y1 - r.y0 + 1) * C8 - 4, '#bdb8ae'); R(r.x0 * C8 + 4, r.y0 * C8 + 4, (r.x1 - r.x0 + 1) * C8 - 8, (r.y1 - r.y0 + 1) * C8 - 8, '#cbc6bc');
-  // entrance mat + vacuum dock
+  // entrance mat
   R(2, 25 * C8 + 2, 12, 12, '#5a4a3a'); for (let k = 0; k < 4; k++) R(4 + k * 3, 25 * C8 + 4, 1, 8, '#6f5a46');
-  R(DOCK.x * C8, DOCK.y * C8 + 4, 8, 3, '#9aa4b0');
   // soft shadows under furniture
   const sh = 'rgba(40,20,10,0.18)';
   if (CLASSIC) {
@@ -2081,13 +2177,15 @@ function drawSecretArt_() {
     c.fillStyle = blink ? '#f5b93a' : '#5a4a20';
     for (const [ex, ey] of [[0, 0], [QR_N - 7, 0], [0, QR_N - 7]]) { c.beginPath(); c.arc(x + (QR_Q + ex + 4.3) * p, y + (QR_Q + ey + 4.3) * p, 0.32 * p, 0, Math.PI * 2); c.fill(); }
   } else drawArtCabinet_(c, ox, oy, outer);
-  c.restore();
   const art = { x: ox / scale - OX, y: oy / scale - OY, w: outer / scale };   // where it landed, in art px
+  const dark = darkAt_(art.x + art.w / 2, art.y + art.w / 2);   // drawn after the lighting: dim it with the room (at night, the townhall)
+  if (dark > 0.01) { c.fillStyle = `rgba(10,12,40,${dark.toFixed(3)})`; c.fillRect(ox, oy, outer, outer + Math.round(scale)); }
+  c.restore();
   // people / dogs in front of it: draw them again over the art (same sprites, clipped to its spot)
   const r = { x: Math.floor(art.x) - 3, y: Math.floor(art.y) - 3, w: Math.ceil(art.w) + 7, h: Math.ceil(art.w) + 7 };
   const hit = e => e.present && !e.hidden && e.px + 12 > r.x && e.px - 3 < r.x + r.w && e.py + 9 > r.y && e.py - 12 < r.y + r.h && e.py + 8 > art.y + 2;
   const front = [...workers.filter(hit).map(w => [w, drawPerson]), ...dogs.filter(hit).map(d => [d, drawDog])];
-  if (courier.present && hit(courier)) front.push([courier, drawPerson]);
+  for (const o of [courier, waterGuy, janitor]) if (o.present && hit(o)) front.push([o, drawPerson]);
   if (!front.length) return;
   front.sort((a, b) => a[0].py - b[0].py);
   if (!artFix) artFix = canvas(1, 1);
@@ -2095,6 +2193,7 @@ function drawSecretArt_() {
   const save = [g, sceneCtx], fx = artFix.getContext('2d');
   g = sceneCtx = fx; fx.setTransform(SS, 0, 0, SS, -r.x * SS, -r.y * SS); fx.imageSmoothingEnabled = false;
   for (const [e, draw] of front) draw(e);
+  if (dark > 0.01) { fx.setTransform(1, 0, 0, 1, 0, 0); fx.globalCompositeOperation = 'source-atop'; fx.fillStyle = `rgba(10,12,40,${dark.toFixed(3)})`; fx.fillRect(0, 0, artFix.width, artFix.height); fx.globalCompositeOperation = 'source-over'; }   // dimmed like the box
   [g, sceneCtx] = save;
   c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.imageSmoothingEnabled = false;
   c.drawImage(artFix, Math.round((OX + r.x) * scale), Math.round((OY + r.y) * scale), r.w * scale, r.h * scale);
@@ -2259,6 +2358,7 @@ function drawPerson(w) {
   blit(c, sx, sy);
   w.headX = sx + 6; w.headTop = sy + 1;
   if (w.headset) cachedOps_(w.hsCache || (w.hsCache = {}), () => drawHeadset(sx, sy + 1, view));
+  if (w === janitor) { drawHeadphones_(sx, sy + 1, view, w.phones); if (w.mop) drawMop_(w, sx, sy, view); }
   if (w.angryUntil > TIME) drawAngry_(sx, sy, view);
   if (w.stareUntil > TIME) stares.push([sx, sy, view, STARE_SECS - (w.stareUntil - TIME)]);   // drawn over everyone (see drawScene)
   if (w.jug && !w.seated) {   // big blue water jug
@@ -2329,11 +2429,28 @@ function drawBubble(w) {
   g.fillStyle = ic.c;
   for (let j = 0; j < 5; j++) for (let i = 0; i < 5; i++) if (rows[j] & (16 >> i)) g.fillRect(bx + 3 + i, by + 2 + j, 1, 1);
 }
-function drawRoomba() {
-  const x = snap(roomba.px), y = snap(roomba.py) + 1, on = !(roomba.tx === DOCK.x && roomba.ty === DOCK.y);
-  R(x, y - 1, 8, 8, OUT); R(x - 1, y, 10, 6, OUT); R(x, y, 8, 6, '#3a3f55'); R(x + 1, y - 0, 6, 6, '#3a3f55'); R(x + 2, y + 1, 4, 3, '#55608a');
-  P(x + 4, y, on ? ((TIME * 3 | 0) % 2 ? '#7fe0b0' : '#2f9a6a') : '#f5b93a');
-  if (on) lights.push({ x: x + 4, y: y + 3, r: 6, a: 0.6, c: '#7fe0b0' });
+function drawHeadphones_(sx, ht, view, on) {   // the janitor's big over-ear headphones: on his head, or down around his neck
+  const B = '#2a2238', C = '#d9453b', Hi = '#f08070';
+  if (view === 'right' || view === 'left') {
+    const fx = x => view === 'right' ? sx + x : sx + 11 - x, l = Math.min(fx(4), fx(6));
+    if (on) { R(Math.min(fx(3), fx(7)), ht - 1, 5, 1, B); R(fx(5), ht, 1, 2, B); R(l, ht + 2, 3, 3, C); P(fx(5), ht + 3, Hi); }
+    else { R(l, ht + 7, 3, 2, C); R(Math.min(fx(3), fx(7)), ht + 8, 5, 1, B); }
+  } else if (on) {
+    R(sx + 2, ht - 1, 8, 1, B); P(sx + 1, ht, B); P(sx + 10, ht, B);
+    R(sx, ht + 2, 2, 3, C); R(sx + 10, ht + 2, 2, 3, C);
+    if (view === 'down') { P(sx, ht + 2, Hi); P(sx + 11, ht + 2, Hi); }
+  } else { R(sx + 2, ht + 8, 8, 1, B); R(sx + 1, ht + 7, 2, 2, C); R(sx + 9, ht + 7, 2, 2, C); }
+}
+function drawMop_(w, sx, sy, view) {   // a wooden handle from his hands to the floor, the mop head swishing side to side while he mops
+  const sw = w.mopping ? Math.round(Math.sin(TIME * 7) * 2) : 0;
+  const [hx, hy, fx, fy] = view === 'right' ? [sx + 8, sy + 10, sx + 13, sy + 15] : view === 'left' ? [sx + 3, sy + 10, sx - 2, sy + 15]
+    : view === 'down' ? [sx + 10, sy + 10, sx + 11, sy + 17] : [sx + 10, sy + 8, sx + 11, sy + 14];
+  const ex = fx + sw, n = Math.max(Math.abs(ex - hx), Math.abs(fy - hy));
+  for (let k = 0; k <= n; k++) {   // a light aluminium handle with a dark edge, so it shows on the wood floor
+    const x = Math.round(hx + (ex - hx) * k / n), y = Math.round(hy + (fy - hy) * k / n);
+    P(x + 1, y, OUT); P(x, y, '#e4e8ee');
+  }
+  R(ex - 3, fy, 6, 3, OUT); R(ex - 2, fy, 4, 2, '#ece6d4'); R(ex - 2, fy + 1, 4, 1, '#bdb6a2');
 }
 
 // ---------------------------------------------------------------- lighting
@@ -2374,13 +2491,23 @@ function drawScreen_() {   // drawn over the dimming: bright, with a slide that 
   else if (slide === 3) R(PROJ_SCREEN.x, PROJ_SCREEN.y0 + 12, 2, h - 18, '#7fb07a');
   g.globalAlpha = 1;
 }
+// How dark the office is at (x, y) (office px) this frame: the dimming, less any light nearby. For things drawn after
+// the lighting pass (the art on the right wall), so they dim with the room.
+let indoorDark = 0;
+function darkAt_(x, y) {
+  let d = indoorDark;
+  for (const l of lights) { const k = l.a * Math.max(0, 1 - Math.hypot(x - l.x, y - l.y) / l.r); if (k > 0) d *= 1 - k; }
+  return d;
+}
 function lighting() {
   const day = daylight(world.hour), occupied = workers.some(w => w.present);
   thDim = clamp(thDim + (townhallNow_() ? DT : -DT) / 3, 0, 1);
   if (thDim > 0) projector_();
   const gloom = weather === 'sun' ? 0 : weather === 'cloud' ? 0.08 : 0.14;
   const outDark = Math.min(0.85, 0.72 * (1 - day) + gloom * day);
-  const inDark = Math.max(0.5 * thDim, occupied ? 0 : Math.min(0.85, 0.06 + 0.72 * (1 - day)));   // office lights follow occupancy (and the townhall)
+  const empty = Math.min(janitor.present && janitor.px >= 0 ? 0.6 : 0.85, 0.06 + 0.72 * (1 - day));   // the janitor works with the lights dimmed, not off
+  const inDark = Math.max(0.5 * thDim, occupied ? 0 : empty);   // office lights follow occupancy (and the townhall)
+  indoorDark = inDark;
   if (outDark < 0.01 && inDark < 0.01) return;
   const L = lc.x;
   L.globalCompositeOperation = 'source-over'; L.setTransform(SS, 0, 0, SS, 0, 0);
@@ -2665,11 +2792,15 @@ function render() {
   drawWindowsCached_();
   g.drawImage(hiL && wallFG2 || wallFG, -BGX, -BGY, bg.width, bg.height);
   if (!CLASSIC) drawWindowLight_();
+  if (wet.length) drawWet_();
   drawClockHands();
   for (const d of ROOM_DOORS) { const busy = d.kind === 'wc' && SPOTS.wc.spots.some(s => s.door === d.x && s.using && s.using.hidden); P(d.x * C8 + 6, 21 * C8 + 4, busy ? '#d9453b' : '#22b573'); }
   const list = STATIC.slice();
   for (const w of workers) if (w.present) list.push({ key: w.py + C8 + 0.5, draw: () => w.isDog ? drawDog(w) : drawPerson(w) });
-  list.push({ key: roomba.py + 4, draw: drawRoomba });
+  if (janitor.present) {
+    list.push({ key: janitor.py + C8 + 0.5, draw: () => drawPerson(janitor) });
+    if (janitor.px >= 0) lights.push({ x: janitor.px + 4, y: janitor.py, r: 40, a: 0.55 });   // a dimmed ceiling light left on where he's working
+  }
   for (const d of dogs) if (d.present) list.push({ key: d.py + C8 + 0.45, draw: () => drawDog(d) });
   if (courier.present) list.push({ key: courier.py + C8 + 0.5, draw: () => drawPerson(courier) });
   if (waterGuy.present) list.push({ key: waterGuy.py + C8 + 0.5, draw: () => drawPerson(waterGuy) });
@@ -2757,7 +2888,9 @@ function step(dt) {
     for (const c of cos) if (!(c.w && c.w.ctl)) c.tick();
     for (const w of workers) if (w.ctl) { drive_(w, dt); cfoWatch_(w); }
     for (const w of workers) placeWatch_(w);
+    janitorStep_(dt);
   }
+  updateWet_();
   for (const w of workers) if (w.bubble && (w.bubble.t -= dt) <= 0) w.bubble = null;
   for (const d of dogs) {
     if (d.bubble && (d.bubble.t -= dt) <= 0) d.bubble = null;
@@ -2895,7 +3028,7 @@ function relayConnect_() {
 }
 function onRelay_(m) {
   if (m.t === 'role') { setRole_(m.lead, m.peers); return; }
-  if (m.t === 'peers') { syncPeers = m.n | 0; if (syncMode === 'lead' && syncPeers) sendSnap_(); return; }
+  if (m.t === 'peers') { if ((m.n | 0) > syncPeers) janitorAsk_(15); syncPeers = m.n | 0; if (syncMode === 'lead' && syncPeers) sendSnap_(); return; }
   if (m.t === 'snap') { if (syncMode === 'follow') applySnap_(m); return; }
   if (m.t === 'talk') { if (syncMode !== 'follow') talkFor_(m.uid); return; }   // the Talk button on gm-user.html
   if (m.t === 'act') { if (syncMode !== 'follow') doAction_(m.uid, m.a); return; }   // an ACTIONS button on gm-user.html
@@ -2966,7 +3099,7 @@ setInterval(() => {
 
 // ---------------------------------------------------------------- one office on every screen
 // The relay picks one screen (whichever connected first, normally the office TV) to run the office: its people,
-// speech, dogs, courier and roomba. It sends a snapshot of who's where 4 times a second, but only while someone
+// speech, dogs, courier and janitor. It sends a snapshot of who's where 4 times a second, but only while someone
 // else is watching, and every other screen draws that, gliding between snapshots. Clicking someone on another
 // screen asks the leader, so everyone sees the same hello. If the leader goes quiet (closed, or a hidden tab),
 // another screen takes over from the last snapshot. With no relay, each screen runs its own office as before.
@@ -2988,8 +3121,8 @@ function setRole_(lead, peers) {
     for (const w of workers) w.ctl = null;
   }
 }
-const idxOf_ = w => w === courier ? -1 : w === waterGuy ? -2 : dogs.includes(w) ? -3 - dogs.indexOf(w) : workers.indexOf(w);
-const whoAt_ = i => i === -1 ? courier : i === -2 ? waterGuy : i <= -3 ? dogs[-3 - i] : workers[i];
+const idxOf_ = w => w === courier ? -1 : w === waterGuy ? -2 : w === janitor ? -5 : dogs.includes(w) ? -3 - dogs.indexOf(w) : workers.indexOf(w);
+const whoAt_ = i => i === -1 ? courier : i === -2 ? waterGuy : i === -5 ? janitor : i <= -3 ? dogs[-3 - i] : workers[i];
 const ent_ = o => [o.present ? 1 : 0, o.hidden ? 1 : 0, Math.round(o.px * 2) / 2, Math.round(o.py * 2) / 2, o.dir, o.pose,
   o.seated && o.sitAt ? SEATS.indexOf(o.sitAt) : -1, o.headset ? 1 : 0, o.bag ? 1 : 0];
 function sendSnap_() {
@@ -2999,7 +3132,7 @@ function sendSnap_() {
     c: courier.present && courier.look ? ent_(courier).concat([courier.look]) : null,
     j: waterGuy.present && waterGuy.look ? ent_(waterGuy).concat([waterGuy.look, waterGuy.jug ? 1 : 0]) : null,
     d: dogs.map(d => [d.present ? 1 : 0, Math.round(d.px * 2) / 2, Math.round(d.py * 2) / 2, d.dir, d.pose]),
-    r: [Math.round(roomba.px * 2) / 2, Math.round(roomba.py * 2) / 2, roomba.dir, roomba.tx, roomba.ty],
+    k: janitor.present ? ent_(janitor).concat([janitor.phones ? 1 : 0, janitor.mopping ? 1 : 0]) : null,
     s: speeches.map(x => [idxOf_(x.w), x.text, Math.round(x.t * 10) / 10, x.life, x.greet ? 1 : 0]),
   });
 }
@@ -3036,7 +3169,7 @@ let okTexts = null, okFeed = null;
 function okText_(t) {   // only lines this page could have said itself, so a forged snapshot can't put words on the TV
   if (!okTexts || okFeed !== feed) {
     okFeed = feed;
-    const all = [].concat(CLICK_LINES, [ANGRY_LINE, WOOF, CFO_LINE], GREETINGS.morning, GREETINGS.bye, COURIER_LINES, WATER_LINES);
+    const all = [].concat(CLICK_LINES, [ANGRY_LINE, WOOF, CFO_LINE], GREETINGS.morning, GREETINGS.bye, COURIER_LINES, WATER_LINES, JANITOR_SONGS, JANITOR_WHO, JANITOR_SHRUG);
     for (const k in ROLES) if (ROLES[k].lines) all.push(...ROLES[k].lines);
     for (const k in ACTIONS) for (const a of ACTIONS[k]) if (a.lines) all.push(...a.lines);
     if (feed) for (const e of feed.feed) if (Array.isArray(e.speech)) all.push(...e.speech);
@@ -3084,10 +3217,10 @@ function applySnap_(m) {
     glideTo_(d, num_(e[1], -4000, GX * C8), num_(e[2], -64, GY * C8));
     d.present = !!e[0]; d.dir = FACES.includes(e[3]) ? e[3] : 'right'; d.pose = e[4] === 'walk' ? 'walk' : 'stand';
   });
-  if (Array.isArray(m.r)) {
-    roomba.present = true; glideTo_(roomba, num_(m.r[0], 0, GX * C8), num_(m.r[1], 0, GY * C8));
-    roomba.dir = FACES.includes(m.r[2]) ? m.r[2] : 'down'; roomba.tx = m.r[3] | 0; roomba.ty = m.r[4] | 0;
-  }
+  if (Array.isArray(m.k)) {
+    janitor.frames = janitor.frames || framesFor_(JANITOR_LOOK);
+    applyEnt_(janitor, m.k); janitor.phones = !!m.k[9]; janitor.mopping = !!m.k[10];
+  } else janitor.present = false;
   if (Array.isArray(m.s)) speeches = m.s.filter(x => Array.isArray(x) && typeof x[1] === 'string' && okText_(x[1]))
     .map(x => ({ w: whoAt_(x[0]), text: x[1], t: num_(x[2], 0, 600), life: num_(x[3], 0, 600), greet: !!x[4] }))
     .filter(x => x.w).slice(-MAX_BUBBLES);
@@ -3104,7 +3237,7 @@ function followStep_(dt) {   // glide everyone toward the latest snapshot
     }
     if (o.pose === 'walk') o.walkT += dt;
   };
-  workers.forEach(glide); dogs.forEach(glide); glide(courier); glide(waterGuy); glide(roomba);
+  workers.forEach(glide); dogs.forEach(glide); glide(courier); glide(waterGuy); glide(janitor);
 }
 function seededLook_(uid) {   // a visitor with no look of their own: the same random look on every screen
   const keep = seed; seed = 0; for (const ch of String(uid)) seed = (Math.imul(seed, 31) + ch.charCodeAt(0)) | 0;
@@ -3132,9 +3265,9 @@ function takeCharge_() {
   dogs.forEach(d => { d.present = false; d.glide = null; });
   courier.present = false; courier.glide = null;
   waterGuy.present = false; waterGuy.glide = null; waterGuy.jug = false; SPOTS.water.spots[0].busy = null;
-  Object.assign(roomba, { px: DOCK.x * C8, py: DOCK.y * C8, tx: DOCK.x, ty: DOCK.y, glide: null });
+  janitor.glide = null; janitor.asking = false; if (janitor.px < 0) janitor.present = false;   // in the doorway: he's gone
   extraCos.dog0.restart(() => dogLife(dogs[0], dogs[1])); extraCos.dog1.restart(() => dogLife(dogs[1], dogs[0]));
-  extraCos.courier.restart(courierLife); extraCos.water.restart(waterLife); extraCos.roomba.restart(roombaLife);
+  extraCos.courier.restart(courierLife); extraCos.water.restart(waterLife); extraCos.janitor.restart(janitorLife);
 }
 // Today's real headcount arrived: right after the page opens, just swap who's at their desk (nobody walks in or
 // out because the page started with the weekday guess); later on, people come and go on foot as usual.
@@ -3179,7 +3312,8 @@ if (carried) {
     w.present = true; placeAtHome_(w); w.greeted = rosterKey;
   }
 } else for (const w of workers) if (wantPresent(w)) { w.present = true; placeAtHome_(w); w.greeted = rosterKey; }   // already at work when the page opens (and already said good morning)
-const extraCos = { roomba: new Co(roombaLife), dog0: new Co(() => dogLife(dogs[0], dogs[1])), dog1: new Co(() => dogLife(dogs[1], dogs[0])), courier: new Co(courierLife), water: new Co(waterLife) };
+if (janitorTime_()) { placeJanitor_(); if (!carried) janitorWhoAt = 2.5; }   // opened at night: he's mid-shift, and hears you come in
+const extraCos = { janitor: new Co(janitorLife), dog0: new Co(() => dogLife(dogs[0], dogs[1])), dog1: new Co(() => dogLife(dogs[1], dogs[0])), courier: new Co(courierLife), water: new Co(waterLife) };
 const cos = [...workers.map(w => (w.co = new Co(() => life(w), w))), ...Object.values(extraCos)];
 if (!params.has('seed')) seed = (Math.random() * 1e9) | 0;
 if (params.get('dogs') === '1') dogs.forEach(d => { d.follow = true; });   // preview: both poodles come in right away
@@ -3192,7 +3326,7 @@ const CLICK_LINES = ["Hi, what's up?", "I'm busy!", 'Trying to find a tree, want
 function personAt_(e) {   // the front-most person under the mouse, or null
   const dpr = window.devicePixelRatio || 1, x = e.clientX * dpr / scale - OX, y = e.clientY * dpr / scale - OY;
   let best = null;
-  for (const w of [...workers, courier, waterGuy]) {
+  for (const w of [...workers, courier, waterGuy, janitor]) {
     if (!w.present || w.hidden || !w.frames || w.isDog) continue;
     const h = w.seated ? 13 : 17;   // sprite box from the top of the head down
     if (x >= w.headX - 6 && x <= w.headX + 6 && y >= w.headTop - 1 && y <= w.headTop + h && (!best || w.headTop > best.headTop)) best = w;
@@ -3279,6 +3413,7 @@ function cfoWatch_(w) {
   w.inCfoTop = inside;
 }
 function poke_(w) {
+  if (w === janitor) { janitorAsk_(6); return; }   // clicking the janitor: "Who's there?"
   if (dogs.includes(w) || w.isDog) { say_(w, WOOF, 2, true); return; }   // click a dog and it barks
   if (w.angryUntil > TIME) return;   // still cross: clicks do nothing
   w.pokes = (w.pokes || []).filter(t => TIME - t < CLICK_WINDOW);
@@ -3362,7 +3497,12 @@ function debugFrame_(now, ms) {
 // A fresh start once a night (about 3 am Eastern, when nobody's in), so an old TV browser never runs for weeks on end.
 setInterval(() => { const h = zoneNow().h; if (h >= 3 && h < 3.1 && performance.now() > 2 * 3600 * 1000 && location.protocol !== 'file:') reloadFresh_(); }, 60 * 1000);
 requestAnimationFrame(frame);
-document.addEventListener('visibilitychange', () => { last = performance.now(); acc = 0; });
+let hiddenAt = 0;
+document.addEventListener('visibilitychange', () => {
+  last = performance.now(); acc = 0;
+  if (document.hidden) hiddenAt = Date.now();
+  else if (hiddenAt && Date.now() - hiddenAt > 20000) janitorWhoAt = TIME + 1;   // back to this tab after a while: the janitor hears someone
+});
 </script>
 </body>
 </html>

@@ -58,6 +58,8 @@ Add these to the TV page, for example `timberjones.github.io/?time=12:30&weather
 
 **Keys on the TV page:** N night, D day, C back to the real clock, W cycle the weather, B someone says a line now, F or Enter (remote OK) fullscreen. Clicking an empty spot also toggles fullscreen; clicking a person makes them say hi (click them more than 5 times in 10 seconds and they get angry: "STOP CLICKING ME", and they ignore clicks for 5 seconds). Click a poodle and it barks "Woof!".
 
+**At night** (an hour after sunset until 5 am, once everyone's gone) a janitor mops the office with the lights dimmed, headphones on, now and then singing a line of a 90s / early 2000s pop song. When someone checks in (another screen opens the office, the page is opened or comes back into view after 20 seconds away, someone walks in from the user page, or he's clicked) he stops, slides his headphones down, asks "Who's there?", looks around and gets back to work.
+
 ## User page
 
 Open `/u`, type your user id (or `1111`, or "I'm new here", to come in as someone new), then walk with the arrow keys or the on-screen d-pad (tap for one step, hold to keep walking) and use the Sit button. You can also change hair, skin, cap, beard, height and clothes. Your look is saved and shows on every TV. Close the page and your character goes back to its usual routine, or walks out if it isn't in today.
@@ -106,7 +108,7 @@ Live features (driving your character, syncing screens, the headcount) need some
 Every screen runs the same simulation code, and the simulation is random: who gets up for coffee, who talks, which way someone walks. Left alone, two screens drift apart within seconds. Instead of trying to keep two random simulations in step, only one screen simulates at a time.
 
 - **Election:** the first screen to connect with `?sync=1` (every current page does) is the leader. The relay tracks the role in each socket's attachment, so it survives hibernation.
-- **Snapshots:** while at least one other screen is watching, the leader sends about 2 KB of JSON 4 times a second. That covers each person's position, pose, seat and speech bubble, plus the dogs, the courier and the roomba. With nobody else watching it sends nothing.
+- **Snapshots:** while at least one other screen is watching, the leader sends about 2 KB of JSON 4 times a second. That covers each person's position, pose, seat and speech bubble, plus the dogs, the courier, the water delivery and the night janitor. With nobody else watching it sends nothing.
 - **Followers** don't simulate. They glide each person toward the latest snapshot over 250 ms. Seats are sent as indexes into the shared seat list, and hallway positions are rescaled because each screen's width differs. Speech text is only shown if it's a line the page already knows, so a forged snapshot can't put words on the TV.
 - **Clicks** on a follower go to the leader as a `poke`. The leader picks the line, and it comes back to everyone in the next snapshot.
 - **Failover:** a follower that hears nothing for 3 s sends `claim`. The relay agrees only if it hasn't heard from the leader either. The new leader restarts everyone's routine from where they stand. If the leader's socket closes, the relay promotes the next screen right away.

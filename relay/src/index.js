@@ -190,8 +190,8 @@ export class Office extends DurableObject {
       const out = JSON.stringify({ t: 'where', x: m.x | 0, y: m.y | 0, dir: DIRS.includes(m.dir) ? m.dir : 'down', sit: !!m.sit, present: !!m.present });
       for (const w of this.ctx.getWebSockets('u' + m.uid)) try { w.send(out); } catch (e) {}
     } else if (m.t === 'poke') {
-      const i = m.i | 0, L = this.leader_();   // -1 courier, -2 water delivery, -3 / -4 the dogs
-      if (L && L !== ws && i >= -4 && i < 200) try { L.send(JSON.stringify({ t: 'poke', i })); } catch (e) {}
+      const i = m.i | 0, L = this.leader_();   // -1 courier, -2 water delivery, -3 / -4 the dogs, -5 the night janitor
+      if (L && L !== ws && i >= -5 && i < 200) try { L.send(JSON.stringify({ t: 'poke', i })); } catch (e) {}
     }
   }
 
