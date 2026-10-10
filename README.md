@@ -35,6 +35,7 @@ Add these to the TV page, for example `timberjones.github.io/?time=12:30&weather
 - `?townhall=1` shows a company townhall now (scheduled ones are in `TOWNHALLS` in gm-office.html, e.g. Oct 8 3:30-5 pm): everyone stays at their desk turned toward the left wall, the left wall desk and small offices empty out, the CEO, COO and CFO stand by the left wall facing everyone, and nobody talks
 - `?water=1` sends the water delivery in right away (otherwise it comes at random, 8:30-16:30, not every day)
 - `?seed=N` fixes the randomness so the day plays out the same way each time
+- `?halloween=1` shows the Halloween season any day (`?halloween=0` turns it off)
 
 **Speech and live data**
 - `?chat=0` turns off speech bubbles
@@ -59,6 +60,8 @@ Add these to the TV page, for example `timberjones.github.io/?time=12:30&weather
 **Keys on the TV page:** N night, D day, C back to the real clock, W cycle the weather, B someone says a line now, F or Enter (remote OK) fullscreen. Clicking an empty spot also toggles fullscreen; clicking a person makes them say hi (click them more than 5 times in 10 seconds and they get angry: "STOP CLICKING ME", and they ignore clicks for 5 seconds). Click a poodle and it barks "Woof!".
 
 **At night** (an hour after sunset until 5 am, once everyone's gone) a janitor mops the office with the lights dimmed, headphones on, now and then singing a line of a 90s / early 2000s pop song. When someone checks in (another screen opens the office, the page is opened or comes back into view after 20 seconds away, someone walks in from the user page, or he's clicked) he stops, slides his headphones down, asks "Who's there?", looks around and gets back to work.
+
+**Halloween** (October 20-31): about three in four people come in costume, the same one all season (scarecrow, pumpkin head, vampire, witch, wizard, cat, skeleton, devil, mummy or pirate). Pumpkins sit on the lunch and conference tables, the kitchen island, the bookcases, the window sills and by the entrance, with an autumn wreath on the corridor wall; the carved ones light up after dark. At night, ghosts drift past the windows (sometimes stopping to peek in) and float around the parking lot.
 
 ## User page
 

@@ -493,8 +493,30 @@ const SIT_UP_A = [
 ];
 const SIT_UP_B = SIT_UP_A.map((r, j) => j === 5 ? '.hhhhhhhhhhs' : r);
 
+// Halloween costumes baked into the character map (m.costume): a few pixels moved per view. 'v' = the costume's
+// accent colour (m.accent), 'o' = a dark carved / painted line.
+const COSTUME_MODS = {
+  pumpkin(s, view, at) {   // round orange head with ridges, a stem, and a carved grin
+    s(0, 5, 'v'); s(0, 6, 'v');
+    if (view === 'right') { for (const j of [1, 2, 3]) { s(j, 5, 'S'); s(j, 8, 'S'); } for (const i of [8, 9, 10]) s(7, i, 'o'); }
+    else { for (const j of [1, 2, 3]) { s(j, 4, 'S'); s(j, 7, 'S'); } if (view === 'down') for (const i of [3, 4, 6, 7, 8]) s(7, i, 'o'); }
+  },
+  skeleton(s, view, at) {   // ribs on a black suit, a spine from behind, a toothy grin
+    if (view === 'up') { for (const j of [9, 10, 11, 12]) s(j, 5, 'v'); for (const j of [10, 12]) for (const i of [3, 4, 7, 8]) s(j, i, 'v'); return; }
+    for (const j of [10, 12]) for (let i = 3; i <= 8; i++) if ('tT'.includes(at(j, i))) s(j, i, 'v');
+    for (const j of [14, 15]) for (let i = 0; i < 12; i++) if (at(j, i) === 'p') { s(j, i, 'v'); break; }   // shin bones
+    if (view === 'down') { s(7, 4, 'o'); s(7, 6, 'o'); s(7, 7, 'o'); }
+  },
+  mummy(s, view, at) {   // bandage wraps round the head, body and legs
+    for (const j of [2, 4, 10, 12, 14]) for (let i = 0; i < 12; i++) if ('hstTp'.includes(at(j, i))) s(j, i, 'v');
+  },
+  stripes(s, view, at) {   // a striped shirt (the pirate)
+    for (const j of [10, 12]) for (let i = 0; i < 12; i++) if ('tT'.includes(at(j, i))) s(j, i, 'v');
+  },
+};
 function hairMods(r, view, m) {
   const s = (j, i, c) => { if (r[j] && i >= 0 && i < r[j].length) r[j][i] = c; };
+  if (m.costume && COSTUME_MODS[m.costume]) COSTUME_MODS[m.costume](s, view, (j, i) => r[j] && r[j][i]);
   if (m.style === 'bun') { if (view === 'right') { s(0, 3, 'h'); s(0, 4, 'h'); } else { s(0, 5, 'h'); s(0, 6, 'h'); } }
   if (m.style === 'spiky') { s(0, 3, 'h'); s(0, 6, 'h'); s(0, 8, 'h'); }
   if (m.hat) {   // baseball cap: crown over the hair, bill out front ('c' = cap colour)
@@ -543,14 +565,16 @@ function buildMod(rows, m, row, front) {
   return rows;
 }
 function buildFrames(m) {
-  const sk = SKINS[m.skin];
-  const pal = { h: m.hair, s: sk[0], S: sk[1], e: '#1f1820', t: m.shirt, T: shade(m.shirt, 0.78), p: m.pants, k: '#2a2238', c: m.hat || m.hair, g: '#8a91a3' };
+  const sk = m.skinCol || SKINS[m.skin];   // skinCol: a costume's face paint / mask
+  const pal = { h: m.hair, s: sk[0], S: sk[1], e: '#1f1820', t: m.shirt, T: shade(m.shirt, 0.78), p: m.pants, k: m.shoes || '#2a2238', c: m.hat || m.hair, g: '#8a91a3' };
+  if (m.costume) Object.assign(pal, { v: m.accent || m.shirt, o: '#3a1a10' });
   const mod = (base, view) => { const r = base.map(s => s.split('')); hairMods(r, view, m); return r.map(a => a.join('')); };
   const legs = (rows, l) => rows.slice(0, 13).concat(l);
   const down = mod(DOWN, 'down'), up = mod(UP, 'up'), right = mod(RIGHT, 'right');
   const F = {}, hd = ART >= 2;
   if (hd) Object.assign(pal, { W: '#fdfcf6', H: shade(m.hair, 0.7), L: mixC(m.hair, '#ffffff', 0.28), C: mixC(m.shirt, '#ffffff', 0.4),
     m: mixC(sk[1], '#a8505a', 0.35), M: shade(m.hair, 0.85), B: shade(m.pants, 0.6), G: '#d8b24a', K: '#5a5470' });
+  if (hd && m.costume) Object.assign(pal, { G: pal.B, K: shade(pal.k, 1.2) });   // no gold belt buckle on a costume
   // stand/walk frames stretch at the hips (row 13), seated frames at the chest (row 9)
   const b = (k, rows, flip, row = 13, front = true) => {
     const r = buildMod(rows, m, row, front);
@@ -1653,6 +1677,156 @@ function drawWet_() {
   }
 }
 
+// ---------------------------------------------------------------- Halloween (October 20-31, Eastern time)
+// Most of the team comes in costume (the same one all season, picked from their id, so every screen agrees), a few
+// pumpkins sit around the office (jack-o'-lanterns light up after dark), and at night ghosts drift past the windows
+// and around the parking lot. ?halloween=1 previews it any day, ?halloween=0 turns it off. Worked out when the page
+// opens (the 3 am restart picks up the new day).
+const HALLOWEEN = (() => {
+  if (params.has('halloween')) return params.get('halloween') !== '0';
+  const [, mo, d] = zoneDay_().key.split('-').map(Number);
+  return mo === 10 && d >= 20 && d <= 31;
+})();
+const SEASON = zoneDay_().key.split('-')[0];
+const strHash_ = str => { let h = 2166136261; for (const ch of String(str)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return (h >>> 0) / 4294967296; };
+const NO_EXTRAS = { beard: false, goatee: false, glasses: false, hat: null, style: 'short' };
+// look: changes to their look; mods: COSTUME_MODS pixels; top: drawn over the sprite (hats, ears, horns, collar)
+const COSTUMES = {
+  scarecrow: { look: { shirt: '#b85c38', pants: '#3b5a96', hat: null, accent: '#e9c46a' }, mods: 'stripes', top: 'straw' },   // (a ghost sheet looked like a blank sprite from the side and back)
+  pumpkin: { look: Object.assign({}, NO_EXTRAS, { hair: '#e07a1f', skinCol: ['#ef8f2c', '#c4661a'], shirt: '#2f7a3a', accent: '#4f8a2a' }), mods: 'pumpkin' },
+  vampire: { look: { hair: '#16121c', skinCol: ['#ece6ee', '#cfc6d6'], shirt: '#1a1420', pants: '#1a1420', hat: null, style: 'short' }, top: 'collar' },
+  witch: { look: { shirt: '#4a2a68', pants: '#241a30', hat: null }, top: 'witch' },
+  wizard: { look: { shirt: '#2d4596', pants: '#2d4596', hat: null }, top: 'wizard' },
+  cat: { look: { hair: '#1c1820', shirt: '#1c1820', pants: '#1c1820', hat: null, style: 'short' }, top: 'ears' },
+  skeleton: { look: Object.assign({}, NO_EXTRAS, { hair: '#1c1a22', skinCol: ['#f2efe4', '#c9c4b4'], shirt: '#1c1a22', pants: '#1c1a22', shoes: '#1c1a22', accent: '#f2efe4' }), mods: 'skeleton' },
+  devil: { look: { shirt: '#c0282e', pants: '#7a1820', hat: null }, top: 'horns' },
+  mummy: { look: Object.assign({}, NO_EXTRAS, { hair: '#ddd4bb', skinCol: ['#e8e0c8', '#c4b99c'], shirt: '#e8e0c8', pants: '#ddd4bc', shoes: '#c4b99c', accent: '#c4b99c' }), mods: 'mummy' },
+  pirate: { look: { shirt: '#f3ecdf', pants: '#2a2238', hat: null, accent: '#d9453b' }, mods: 'stripes', top: 'pirate' },
+};
+const COSTUME_KINDS = Object.keys(COSTUMES);
+const NO_COSTUME = ['courier', 'water', 'janitor'];   // visitors from outside come as themselves
+function costumeOf_(w) {   // { kind, frames, top } for this person this season, or null (about 1 in 4 skip it)
+  if (!HALLOWEEN || w.isDog || NO_COSTUME.includes(w.role)) return null;
+  const holder = w.v || w, look = holder.look || w.look;
+  if (!look || look.dog) return null;
+  if (!holder.cos || holder.cos.look !== look) {   // built once (and again if they change their look on gm-user.html)
+    const id = String(holder.uid || w.sid || w.i) + ':' + SEASON;
+    const kind = strHash_(id) < 0.25 ? null : COSTUME_KINDS[Math.floor(strHash_(id + 'k') * COSTUME_KINDS.length)], C = kind && COSTUMES[kind];
+    holder.cos = { look, kind, top: C && C.top, frames: C ? buildFrames(Object.assign({}, look, C.look, { costume: C.mods || kind })) : null };
+  }
+  return holder.cos.kind ? holder.cos : null;
+}
+// little character maps drawn with P: O = outline, other letters from the palette
+function drawMap_(rows, x, y, pal, flip) {
+  for (let j = 0; j < rows.length; j++) for (let i = 0; i < rows[j].length; i++) {
+    const c = pal[rows[j][flip ? rows[j].length - 1 - i : i]];
+    if (c) P(x + i, y + j, c);
+  }
+}
+const TOPS = {   // [rows, dx, dy (from the sprite's left / head top), palette]
+  witch: [['.......OO.....', '......OHHO....', '.....OHHO.....', '....OHHHHO....', '....OHHHHO....', '...OHHHHHHO...', '...ObbbbbbO...',
+    'OOOHHHHHHHHOOO', 'OHHHHHHHHHHHHO', '.OOOOOOOOOOOO.'], -1, -7, { H: '#2a2232', b: '#8b5cf6' }],
+  wizard: [['......O.......', '.....OHO......', '.....OHO......', '....OHHHO.....', '....OHYHO.....', '...OHHHHHO....', '...OHHHHHHO...',
+    '..OHHHYHHHHO..', '.OOHHHHHHHHOO.', 'OHHHHHHHHHHHHO', '.OOOOOOOOOOOO.'], -1, -8, { H: '#2d4596', Y: '#f5d76e' }],
+  straw: [['....OOOOOO....', '...OSSSSSSO...', '...ObbbbbbO...', 'OOOSSSSSSSSOOO', 'OSSSSSSSSSSSSO', '.OOOOOOOOOOOO.'], -1, -3, { S: '#d8b46a', b: '#7a4a2a' }],
+  ears: [['..OO......OO..', '..OHO....OHO..', '..OHpO..OpHO..'], -1, -2, { H: '#1c1820', p: '#e88aa0' }],
+  horns: [['..O........O..', '.OHO......OHO.', '.OHHO....OHHO.', '..OHHO..OHHO..'], -1, -3, { H: '#d9453b' }],
+};
+function drawCostumeTop_(kind, sx, ht, view) {
+  const pal = { O: OUT };
+  if (TOPS[kind]) { const [rows, dx, dy, p] = TOPS[kind]; drawMap_(rows, sx + dx, ht + dy, Object.assign(pal, p), view === 'left'); return; }
+  if (kind === 'collar') {   // the vampire's tall cape collar, red lining
+    Object.assign(pal, { R: '#9a1a24', K: '#1a1420' });
+    if (view === 'right' || view === 'left') drawMap_(['.O.', 'OK.', 'ORK', 'ORK'], view === 'right' ? sx + 1 : sx + 8, ht + 5, pal, view === 'left');
+    else drawMap_(['O..........O', 'OO........OO', '.RO......OR.', '.RRO....ORR.'], sx, ht + 5, pal);
+  } else if (kind === 'pirate') {   // red bandana with white dots; an eye patch on its strap
+    Object.assign(pal, { R: '#d9453b', W: '#f3ecdf', K: '#1a1a24' });
+    drawMap_(['....RRRRRR..', '...RRWRRWRR.', '..RRRRRRRRRR'], sx - 1, ht, pal);
+    if (view === 'down') drawMap_(['.KKKKKKKKKK.', '..KK........', '..KK........'], sx, ht + 3, pal);
+    else if (view === 'right' || view === 'left') {
+      const f = x => view === 'right' ? sx + x : sx + 11 - x;
+      for (let i = 4; i <= 10; i++) P(f(i), ht + 3, pal.K);
+      R(Math.min(f(9), f(10)), ht + 4, 2, 2, pal.K); R(Math.min(f(1), f(2)), ht + 2, 2, 3, pal.R);   // patch; the bandana's knot at the back
+    } else R(sx + 5, ht + 3, 2, 3, pal.R);
+  }
+}
+// ---- decor: pumpkins on the tables, the kitchen island, the bookcases, the window sills and by the entrance
+const PUMPKIN_SMALL = ['...v...', '.OOvOO.', 'OlodooO', 'OoodooO', '.OOOOO.'];
+const PUMPKIN_BIG = ['....vv...', '.OOOvOOO.', 'OlooodooO', 'OoEodoEoO', 'OooodoooO', 'OoEEEEEoO', '.OOOOOOO.'];
+const PUMPKIN_COL = { o: '#e8862a', l: '#f6aa55', d: '#c46a1c', v: '#5a7a2a' }, WHITE_PUMPKIN = { o: '#efe6d4', l: '#fbf6ea', d: '#d4c8b0', v: '#6a7a3a' };
+function drawPumpkin_(x, y, big, cols, carved) {
+  const lit = carved && daylight(world.hour) < 0.5;
+  drawMap_(big ? PUMPKIN_BIG : PUMPKIN_SMALL, x, y, Object.assign({ O: OUT, E: carved ? (lit ? '#ffd860' : '#4a2a10') : cols.o }, cols));
+  if (lit) lights.push({ x: x + 4, y: y + 4, r: 14, a: 0.75, c: '#ffb050' });
+}
+// [x, y (office px, top-left), big, white, carved, sort row]
+const DECOR = [
+  [307, 178, true, false, true, 24], [306, 189, false, true, false, 24], [309, 168, false, false, false, 24],   // lunch table centrepiece
+  [252, 172, false, false, false, 22],                                                                         // kitchen island
+  [296, 29, true, false, true, 6], [288, 34, false, true, false, 6],                                            // conference table
+  [282, 211, false, false, false, 28], [290, 212, false, true, false, 28], [352, 211, false, false, false, 28],  // bookcases along the bottom wall
+  [30, 192, true, false, true, 25], [40, 195, false, false, false, 25],                                         // the entrance, by the door
+];
+function addDecor_() {   // into the sorted scene (buildDrawables)
+  if (!HALLOWEEN) return;
+  for (const [x, y, big, white, carved, row] of DECOR) STATIC.push({ key: row * C8 - 0.25, draw: () => drawPumpkin_(x, y, big, white ? WHITE_PUMPKIN : PUMPKIN_COL, carved) });
+}
+function drawSillDecor_() {   // small pumpkins on the window sills (the static window-frame layer)
+  if (!HALLOWEEN) return;
+  WINDOWS.forEach((w, i) => {
+    drawPumpkin_(w.x + 3, w.y + w.h - 3, false, i % 2 ? WHITE_PUMPKIN : PUMPKIN_COL, false);
+    if (w.w > 40) drawPumpkin_(w.x + w.w - 10, w.y + w.h - 3, false, PUMPKIN_COL, false);
+  });
+}
+function drawWreath_() {   // an autumn-leaf wreath on the entrance corridor wall
+  if (!HALLOWEEN) return;
+  const cx = 38, cy = 24 * C8 - 6, cols = ['#c46a1c', '#e8862a', '#a8442a', '#d8a040', '#7a5a2a'];
+  for (let dy = -5; dy <= 5; dy++) for (let dx = -5; dx <= 5; dx++) {
+    const d2 = dx * dx + dy * dy;
+    if (d2 <= 25 && d2 >= 6) P(cx + dx, cy + dy, d2 >= 20 ? OUT : cols[Math.floor(hash(dx + 9, dy + 9) * cols.length)]);
+  }
+  R(cx - 2, cy + 3, 5, 2, '#7a3a8a'); P(cx, cy + 3, '#9a5aaa');   // a small bow
+}
+// ---- ghosts after dark: drifting past the windows (inside the glass) and floating around the parking lot
+const GHOST_A = ['..OOO..', '.OWWWO.', 'OWWWWWO', 'OWeWeWO', 'OWWWWWO', 'OWWoWWO', 'OWWWWWO', 'OW.W.WO', 'O..O..O'];
+const GHOST_B = GHOST_A.slice(0, 7).concat(['OWWOWWO', '.O.O.O.']);
+const GHOST_PAL = { O: '#7d8cc0', W: '#f4f7ff', e: '#1a1f3a', o: '#1a1f3a' };
+const winGhosts = [0, 1].map(k => ({ x: -100, v: 0, wait: rnd(2, 10) + k * 12, ph: rnd(0, 6), stop: null, pause: 0 }));
+const lotGhosts = [0, 1, 2].map(() => ({ x: rnd(0, 1), y: rnd(0.2, 0.8), v: rnd(4, 8) * (chance(0.5) ? 1 : -1), ph: rnd(0, 6) }));
+const ghostsOut_ = () => HALLOWEEN && daylight(world.hour) < 0.35;
+function drawGhost_(x, y, t, a) {
+  g.globalAlpha = a; drawMap_((t * 3 | 0) % 2 ? GHOST_B : GHOST_A, x, y, GHOST_PAL); g.globalAlpha = 1;
+}
+function drawWindowGhosts_() {   // office coords, between the sky and the window frames
+  if (!ghostsOut_()) return;
+  const last = WINDOWS[WINDOWS.length - 1], x0 = WINDOWS[0].x - 10, x1 = last.x + last.w + 3;
+  for (const gh of winGhosts) {
+    if (gh.wait > 0) {
+      if ((gh.wait -= DT) <= 0) { const r = chance(0.5); gh.v = rnd(6, 11) * (r ? 1 : -1); gh.x = r ? x0 : x1; gh.stop = chance(0.4) ? rnd(x0 + 30, x1 - 30) : null; }
+      continue;
+    }
+    if (gh.stop != null && Math.abs(gh.x - gh.stop) < 1) { gh.stop = null; gh.pause = rnd(2, 4); }   // stops to peek in
+    if (gh.pause > 0) gh.pause -= DT; else gh.x += gh.v * DT;
+    if (gh.x < x0 - 1 || gh.x > x1 + 1) { gh.wait = rnd(10, 30); continue; }
+    const y = WINDOWS[0].y + 2 + Math.sin(TIME * 2 + gh.ph) * 1.5;
+    g.save(); g.beginPath(); for (const w of WINDOWS) g.rect(w.x, w.y, w.w, w.h); g.clip();
+    drawGhost_(gh.x, y, TIME + gh.ph, 0.85);
+    g.restore();
+    lights.push({ x: gh.x + 3.5, y: y + 4, r: 10, a: 0.5, c: '#cfe0ff' });
+  }
+}
+function drawLotGhosts_(top) {   // view coords, in the alley / parking lot above the building
+  if (!ghostsOut_() || top < 11) return;   // a ghost is 9 px tall: the lot can be quite narrow on a wide screen
+  g.save(); g.beginPath(); g.rect(0, 0, VW, top - 1); g.clip();
+  for (const gh of lotGhosts) {
+    gh.x += gh.v * DT / VW; if (gh.x > 1.05) gh.x = -0.05; if (gh.x < -0.05) gh.x = 1.05;
+    const room = top - 11, x = gh.x * VW, y = 1 + gh.y * room + Math.sin(TIME * 1.6 + gh.ph) * Math.min(2, room / 2);
+    drawGhost_(x, y, TIME + gh.ph, 0.6 + 0.2 * Math.sin(TIME * 0.7 + gh.ph));
+    lights.push({ x: x + 3.5 - OX, y: y + 4 - OY, r: 12, a: 0.55, c: '#cfe0ff' });
+  }
+  g.restore();
+}
+
 // ---------------------------------------------------------------- furniture sprites
 const SPR = {};
 function buildSprites() {
@@ -1812,6 +1986,7 @@ function buildLayers() {
   // corridor north wall face with a painting
   R(-3, 24 * C8 - 11, 51, 11, OUT); wallFace_(-2, 48, 24 * C8 - 10, 9); R(-2, 24 * C8 - 1, 50, 1, '#7a4e2a');
   R(14, 24 * C8 - 9, 14, 6, OUT); R(15, 24 * C8 - 8, 12, 4, '#d9453b'); R(18, 24 * C8 - 8, 4, 4, '#ec8f2b'); R(23, 24 * C8 - 7, 3, 2, '#2f9a8a');
+  drawWreath_();
   // north wall face (windows filled in each frame)
   R(45, -22, GX * C8 - 42, 22, OUT); wallFace_(46, GX * C8, -21, 20); R(46, -21, GX * C8 - 46, 1, '#ffffff'); R(46, -1, GX * C8 - 46, 1, '#7a4e2a');
   for (const w of WINDOWS) g.clearRect(w.x, w.y, w.w, w.h);
@@ -1831,6 +2006,7 @@ function buildLayers() {
     R(x, y + 5, w, 1, '#2b2f3a');
     R(x - 3, y + h + 1, w + 6, 2, '#e3d8c4'); R(x - 3, y + h + 3, w + 6, 1, OUT);
   }
+  drawSillDecor_();
   bg2 = x2Layer_(bg); wallFG2 = x2Layer_(wallFG);
 }
 
@@ -2331,7 +2507,7 @@ function drawWall() {
 function drawPerson(w) {
   if (w.hidden) return;
   if (!w.frames) { if (!w.v || !w.v.look) return; w.frames = w.v.frames = framesFor_(w.v.look); }   // overflow: built on first appearance
-  const X = snap(w.px), Y = snap(w.py), F = w.frames;   // half-pixel positions when supersampling
+  const cos = costumeOf_(w), X = snap(w.px), Y = snap(w.py), F = cos ? cos.frames : w.frames;   // half-pixel positions when supersampling; costume frames at Halloween
   let sx = X - 2;
   let c, sy, view;
   if (w.seated) {
@@ -2357,6 +2533,7 @@ function drawPerson(w) {
   if (!CLASSIC && !w.seated) groundShadow_(X + 4, Y + 8, 5);
   blit(c, sx, sy);
   w.headX = sx + 6; w.headTop = sy + 1;
+  if (cos && cos.top) drawCostumeTop_(cos.top, sx, sy + 1, view);
   if (w.headset) cachedOps_(w.hsCache || (w.hsCache = {}), () => drawHeadset(sx, sy + 1, view));
   if (w === janitor) { drawHeadphones_(sx, sy + 1, view, w.phones); if (w.mop) drawMop_(w, sx, sy, view); }
   if (w.angryUntil > TIME) drawAngry_(sx, sy, view);
@@ -2773,6 +2950,7 @@ function buildDrawables() {
   const BESIDE = ['island', 'counterV'];
   for (const p of PROPS) STATIC.push({ key: (BESIDE.includes(p[0]) ? p[2] + 1 : p[2] + p[4]) * C8 - 0.3, draw: () => drawProp(p) });
   STATIC.push({ key: 9 * C8 - 0.2, draw: drawWall });
+  addDecor_();
 }
 function render() {
   lights = [];
@@ -2790,6 +2968,7 @@ function render() {
   g.translate(OX, OY);
   g.drawImage(hiL && bg2 || bg, -BGX, -BGY, bg.width, bg.height);
   drawWindowsCached_();
+  drawWindowGhosts_();
   g.drawImage(hiL && wallFG2 || wallFG, -BGX, -BGY, bg.width, bg.height);
   if (!CLASSIC) drawWindowLight_();
   if (wet.length) drawWet_();
@@ -2822,6 +3001,7 @@ function render() {
       for (let k = 0; k < Math.min(n, flakes.length); k++) { const f = flakes[k], x = (f.x * VW + Math.sin(TIME + f.p) * 3 + VW) % VW, y = f.y * alley; if (outdoors(y + f.s)) g.fillRect(x | 0, y | 0, f.s, f.s); }
     }
   }
+  drawLotGhosts_(alley);
   // alley lamps
   const night = 1 - daylight(world.hour);
   g.translate(OX, OY);
